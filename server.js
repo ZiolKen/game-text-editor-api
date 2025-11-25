@@ -42,41 +42,25 @@ function detectType(filename, buffer = "") {
 }
 
 /* ======================================================
-   FILTER RPGM COMMON EVENTS
+   FILTER RPGM
 ====================================================== */
 
-function isBadRPGMLine(str) {
+function isGarbageText(str) {
     if (!str) return true;
 
-    const s = str.trim();
+    const t = str.trim();
 
-    if (!s) return true; 
-    if (/^\d+$/.test(s)) return true;  
-    if (/^player$/i.test(s)) return true;
-    if (/^end$/i.test(s)) return true;
-    if (/^\\i\[\d+\]$/i.test(s)) return true;  
-    if (/^\\i\[\d+\]\d+$/i.test(s)) return true;  
+    if (!t) return true;          
+    if (/^\d+$/.test(t)) return true;   
+    if (/^player$/i.test(t)) return true;
+    if (/^end$/i.test(t)) return true;
+    if (/^retry$/i.test(t)) return true;
+    if (/^correct$/i.test(t)) return true;
+    if (/^start$/i.test(t)) return true;
+    if (/^TILESET-.+/i.test(t)) return true;
+    if (/^POPTEXT-.+/i.test(t)) return true;
 
-    return false;
-}
-
-/* ======================================================
-   FILTER RPGM MAPXXX.json
-====================================================== */
-
-function isBadMapLine(str) {
-    if (!str) return true;
-
-    const s = str.trim();
-
-    if (!s) return true;
-    if (/^\d+$/.test(s)) return true;
-    if (/^player$/i.test(s)) return true;
-    if (/^end$/i.test(s)) return true;
-
-    if (/^POPTEXT/i.test(s)) return true;
-    if (/^\\fn/i.test(s)) return true;
-    if (/^\\i\[\d+\]/i.test(s)) return true;
+    if (/^\\i\[\d+\]$/.test(t)) return true; 
 
     return false;
 }
@@ -97,30 +81,43 @@ function extractMVTextAndMapping(commonEvents) {
             const params = cmd.parameters || [];
 
             if ((code === 401 || code === 405) && typeof params[0] === "string") {
-
-                if (isBadRPGMLine(params[0])) return;
-
-                lines.push(params[0]);
-                mapping.push({ evIndex, cmdIndex, paramIndex: 0 });
+                if (!isGarbageText(params[0])) {
+                    lines.push(params[0]);
+                    mapping.push({ evIndex, cmdIndex, paramIndex: 0 });
+                }
             }
             else if (code === 102 && Array.isArray(params[0])) {
-                params[0].forEach((choice, ci) => {
-                    if (typeof choice === "string") {
-                        lines.push(choice);
-                        mapping.push({
-                            evIndex, cmdIndex,
-                            paramIndex: [0, ci]
-                        });
-                    }
-                });
+               params[0].forEach((choice, ci) => {
+                   if (typeof choice === "string" && !isGarbageText(choice)) {
+                       lines.push(choice);
+                       mapping.push({
+                           type: "event",
+                           eventId, pageIndex,
+                           cmdIndex,
+                           paramIndex:[0, ci]
+                       });
+                   }
+               });
             }
-            else if (code === 402 && typeof params[1] === "string") {
-                lines.push(params[1]);
-                mapping.push({ evIndex, cmdIndex, paramIndex: 1 });
+            if (code === 402 && typeof params[1] === "string") {
+                if (!isGarbageText(params[1])) {
+                    lines.push(params[1]);
+                    mapping.push({
+                        type:"event",
+                        eventId, pageIndex,
+                        cmdIndex, paramIndex:1
+                    });
+                }
             }
-            else if ((code === 118 || code === 119) && typeof params[0] === "string") {
-                lines.push(params[0]);
-                mapping.push({ evIndex, cmdIndex, paramIndex: 0 });
+            if ((code === 118 || code === 119) && typeof params[0] === "string") {
+                if (!isGarbageText(params[0])) {
+                    lines.push(params[0]);
+                    mapping.push({
+                        type:"event",
+                        eventId, pageIndex,
+                        cmdIndex, paramIndex:0
+                    });
+                }
             }
         });
     });
@@ -166,37 +163,37 @@ function extractMapTextAndMapping(mapJson) {
                 const params = cmd.parameters || [];
 
                 if ((code === 401 || code === 405) && typeof params[0] === "string") {
-
-                    if (isBadMapLine(params[0])) return;
-
-                    lines.push(params[0]);
-                    mapping.push({
-
-                        type: "event",
-                        eventId, pageIndex,
-                        cmdIndex, paramIndex: 0
-                    });
+                    if (!isGarbageText(params[0])) {
+                        lines.push(params[0]);
+                        mapping.push({
+                            type: "event",
+                            eventId, pageIndex,
+                            cmdIndex, paramIndex: 0
+                        });
+                    }
                 }
                 else if (code === 102 && Array.isArray(params[0])) {
-                    params[0].forEach((choice, ci) => {
-                        if (typeof choice === "string") {
-                            lines.push(choice);
-                            mapping.push({
-                                type: "event",
-                                eventId, pageIndex,
-                                cmdIndex,
-                                paramIndex: [0, ci]
-                            });
-                        }
-                    });
+                     params[0].forEach((choice, ci) => {
+                         if (typeof choice === "string" && !isGarbageText(choice)) {
+                             lines.push(choice);
+                             mapping.push({
+                                 type: "event",
+                                 eventId, pageIndex,
+                                 cmdIndex,
+                                 paramIndex:[0, ci]
+                             });
+                         }
+                     });
                 }
-                else if (code === 402 && typeof params[1] === "string") {
-                    lines.push(params[1]);
-                    mapping.push({
-                        type: "event",
-                        eventId, pageIndex,
-                        cmdIndex, paramIndex: 1
-                    });
+                if (code === 402 && typeof params[1] === "string") {
+                    if (!isGarbageText(params[1])) {
+                        lines.push(params[1]);
+                        mapping.push({
+                            type:"event",
+                            eventId, pageIndex,
+                            cmdIndex, paramIndex:1
+                        });
+                    }
                 }
                 else if (code === 355 && typeof params[0] === "string") {
                     const m = params[0].match(/"([^"]+)"/);
@@ -209,13 +206,15 @@ function extractMapTextAndMapping(mapJson) {
                         });
                     }
                 }
-                else if ((code === 118 || code === 119) && typeof params[0] === "string") {
-                    lines.push(params[0]);
-                    mapping.push({
-                        type: "event",
-                        eventId, pageIndex,
-                        cmdIndex, paramIndex: 0
-                    });
+                if ((code === 118 || code === 119) && typeof params[0] === "string") {
+                    if (!isGarbageText(params[0])) {
+                        lines.push(params[0]);
+                        mapping.push({
+                            type:"event",
+                            eventId, pageIndex,
+                            cmdIndex, paramIndex:0
+                        });
+                    }
                 }
             });
         });
@@ -734,6 +733,7 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
 
