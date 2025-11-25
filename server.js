@@ -15,17 +15,28 @@ const store = new Map();
 /* ======================================================
    Detect file type
 ====================================================== */
-function detectType(filename) {
+
+function detectType(filename, buffer = "") {
     const f = filename.toLowerCase();
 
     if (f.endsWith(".json")) return "rpgmv-json";
     if (f.endsWith(".rpy")) return "renpy-script";
-    if (f.endsWith(".rvdata2")) return "rvdata2";
-    if (f.endsWith(".wolf")) return "wolf";
-    if (f.endsWith(".rpa")) return "renpy-rpa";
-    if (f.endsWith(".rpyc")) return "renpy-rpyc";
-    if (f.endsWith(".xp3")) return "xp3archive";
-    if (f.endsWith(".ks")) return "kirikiriscript";
+
+    if (f.endsWith(".ks")) {
+        const text = buffer.toString();
+
+        // Kirikiri KAG: @tag , 「dialog」 , *label
+        if (/@[a-zA-Z]/.test(text) || /「[^」]+」/.test(text) || /^\*/m.test(text)) {
+            return "kag-ks";
+        }
+
+        // TyranoScript: [tag], ;comment, plain dialog
+        if (/\[[^\]]+\]/.test(text)) {
+            return "tyrano-ks";
+        }
+
+        return "tyrano-ks";
+    }
 
     return "unknown";
 }
@@ -33,6 +44,7 @@ function detectType(filename) {
 /* ======================================================
    1) Extract MV CommonEvents.json
 ====================================================== */
+
 function extractMVTextAndMapping(commonEvents) {
     const lines = [];
     const mapping = [];
@@ -91,6 +103,7 @@ function insertMVTextBack(commonEvents, newLines, mapping) {
 /* ======================================================
    2) Extract MapXXX.json
 ====================================================== */
+
 function extractMapTextAndMapping(mapJson) {
     const lines = [];
     const mapping = [];
@@ -335,10 +348,136 @@ function insertRenpyTextBackAdvanced(source, newLines, mapping) {
     return linesArr.join("\n");
 }
 
+/* ========================================================================
+   4) TyranoScript .ks — extract & reinsert dialog
+======================================================================== */
+
+function extractTyranoTextAndMapping(source) {
+    const linesArr = source.split(/\r?\n/);
+    const out = [];
+    const mapping = [];
+
+    for (let i = 0; i < linesArr.length; i++) {
+        const raw = linesArr[i];
+        const line = raw.trim();
+
+        if (!line) continue;
+        if (line.startsWith("*")) continue;     
+        if (line.startsWith(";")) continue;        
+        if (line.startsWith("@")) continue;        
+        if (/^\[[^\]]+\]$/.test(line)) continue;     
+        if (/^if\s*\(.+\)/.test(line)) continue;  
+        if (/^\w+\(.+\)$/.test(line)) continue;      
+        if (/^[A-Za-z_]\w*\s*=/.test(line)) continue; 
+        if (/^\{.*\}$/.test(line)) continue;    
+        if (line.startsWith("[eval") || line.startsWith("eval")) continue;
+
+        if (/^#[A-Za-z0-9_]+/.test(line)) continue; 
+
+        const mHead = raw.match(/^(\s*(\[[^\]]*\]\s*)*)/);
+        const prefix = mHead ? mHead[0] : "";
+        const rest = raw.slice(prefix.length);
+
+        const mTail = rest.match(/(\s*(\[[^\]]*\]\s*)*)$/);
+        const suffix = mTail ? mTail[0] : "";
+
+        const center = rest.slice(0, rest.length - suffix.length).trim();
+
+        if (!/[A-Za-z\u00C0-\u1EF9]/.test(center)) continue;
+
+        out.push(center);
+        mapping.push({ lineIndex: i, prefix, center, suffix });
+    }
+
+    return { lines: out, mapping };
+}
+
+function insertTyranoTextBack(source, newLines, mapping) {
+    const linesArr = source.split(/\r?\n/);
+
+    mapping.forEach((m, i) => {
+        const newText = newLines[i] ?? "";
+        linesArr[m.lineIndex] = m.prefix + newText + m.suffix;
+    });
+
+    return linesArr.join("\n");
+}
+
+/* ========================================================================
+   5) Kirikiri KAG .ks
+======================================================================== */
+
+function extractKAGTextAndMapping(source) {
+    const lines = source.split(/\r?\n/);
+    const out = [];
+    const mapping = [];
+
+    const rgx = /"([^"]+)"|「([^」]+)」/g;
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+
+        if (line.startsWith("@")) continue;
+        if (line.startsWith("*")) continue; 
+        if (line.startsWith(";")) continue;
+
+        rgx.lastIndex = 0;
+        let m, idx = 0;
+
+        while ((m = rgx.exec(line)) !== null) {
+            const text = m[1] || m[2];
+            out.push(text);
+
+            mapping.push({
+                lineIndex: i,
+                stringIndex: idx,
+                quoteType: m[1] ? '"' : '「」'
+            });
+
+            idx++;
+        }
+    }
+
+    return { lines: out, mapping };
+}
+
+function insertKAGTextBack(source, newLines, mapping) {
+    const lines = source.split(/\r?\n/);
+
+    const rgx = /"([^"]+)"|「([^」]+)」/g;
+
+    function replaceNth(line, nth, newText, quoteType) {
+        let count = 0;
+
+        return line.replace(rgx, (match, g1, g2) => {
+            if (count === nth) {
+                const escaped = newText.replace(/"/g, '\\"');
+
+                if (quoteType === '"') return `"${escaped}"`;
+                return `「${escaped}」`;
+            }
+            count++;
+            return match;
+        });
+    }
+
+    mapping.forEach((m, idx) => {
+        lines[m.lineIndex] = replaceNth(
+            lines[m.lineIndex],
+            m.stringIndex,
+            newLines[idx],
+            m.quoteType
+        );
+    });
+
+    return lines.join("\n");
+}
+
 /* ======================================================
    UPLOAD — MAP + COMMON + RPY
 ====================================================== */
 
+const type = detectType(originalname, buffer);
 app.post("/Upload", upload.array("files"), (req, res) => {
     if (!req.files?.length)
         return res.status(400).json({ error: "No files uploaded" });
@@ -406,6 +545,40 @@ app.post("/Upload", upload.array("files"), (req, res) => {
             continue;
         }
 
+        // Tyrano
+        if (type === "tyrano-ks") {
+            const src = buffer.toString("utf8");
+            const { lines, mapping } = extractTyranoTextAndMapping(src);
+      
+            store.set(id, {
+                type,
+                name: originalname,
+                tyranoSource: src,
+                tyranoMapping: mapping,
+                lines
+            });
+      
+            results.push({ id, type, name: originalname, lines });
+            continue;
+        }
+
+        // Kirikiri KAG
+        if (type === "kag-ks") {
+            const src = buffer.toString("utf8");
+            const { lines, mapping } = extractKAGTextAndMapping(src);
+
+            store.set(id, {
+                type,
+                name: originalname,
+                kagSource: src,
+                kagMapping: mapping,
+                lines
+            });
+
+            results.push({ id, type, name: originalname, lines });
+            continue;
+        }
+
         // Unsupported
         store.set(id, { type, name: originalname, rawBuffer: buffer });
         results.push({
@@ -420,6 +593,7 @@ app.post("/Upload", upload.array("files"), (req, res) => {
 /* ======================================================
    LOAD /Edit/:id
 ====================================================== */
+
 app.get("/Edit/:id", (req, res) => {
     const item = store.get(req.params.id);
     if (!item) return res.status(404).json({ error: "Not found" });
@@ -438,6 +612,7 @@ app.get("/Edit/:id", (req, res) => {
 /* ======================================================
    SAVE /Edit/:id
 ====================================================== */
+
 app.post("/Edit/:id", (req, res) => {
     const item = store.get(req.params.id);
     if (!item) return res.status(404).json({ error: "Not found" });
@@ -468,6 +643,30 @@ app.post("/Edit/:id", (req, res) => {
             item.renpySource,
             newLines,
             item.renpyMapping
+        );
+        const buf = Buffer.from(updated, "utf8");
+        res.setHeader("Content-Disposition", `attachment; filename="${item.name}"`);
+        return res.send(buf);
+    }
+
+    // Tyrano
+    if (item.tyranoSource) {
+        const updated = insertTyranoTextBack(
+            item.tyranoSource,
+            newLines,
+            item.tyranoMapping
+        );
+        const buf = Buffer.from(updated, "utf8");
+        res.setHeader("Content-Disposition", `attachment; filename="${item.name}"`);
+        return res.send(buf);
+    }
+   
+    // KAG
+    if (item.kagSource) {
+        const updated = insertKAGTextBack(
+            item.kagSource,
+            newLines,
+            item.kagMapping
         );
         const buf = Buffer.from(updated, "utf8");
         res.setHeader("Content-Disposition", `attachment; filename="${item.name}"`);
