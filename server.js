@@ -91,7 +91,7 @@ function insertMVTextBack(commonEvents, newLines, mapping) {
 }
 
 /* ========================================================================
-   2) Ren’Py .rpy — regex & helpers 
+   2) Ren’Py .rpy — regex & helpers (theo code bạn đưa)
 ======================================================================== */
 
 const RGX_ASSET_FILE = /\.(png|jpe?g|gif|webp|mp3|ogg|wav|mp4|webm|m4a|avi|mov|ttf|otf|pfb|pfm|ps|woff2?|eot|svg)["']?$/i;
@@ -191,7 +191,7 @@ function extractRenpyTextAdvanced(source) {
         let m;
         while ((m = RGX_ANY_STRING.exec(line)) !== null) {
             const raw = m[0];
-            const quote = raw[0]; 
+            const quote = raw[0]; // " hoặc '
             const inner = raw.slice(1, -1);
 
             allTexts.push(inner);
@@ -237,6 +237,7 @@ function insertRenpyTextBackAdvanced(source, newLines, mapping) {
 
 /* ========================================================================
    UPLOAD (MULTI FILE)
+//   Trả về: { files: [ {id, name, type, lines?} ] }
 ======================================================================== */
 app.post("/Upload", upload.array("files"), (req, res) => {
     if (!req.files || req.files.length === 0)
@@ -288,6 +289,7 @@ app.post("/Upload", upload.array("files"), (req, res) => {
             continue;
         }
 
+        // unsupported -> lưu thô
         store.set(id, { type, name: originalname, rawBuffer: buffer });
         results.push({
             id,
