@@ -477,7 +477,6 @@ function insertKAGTextBack(source, newLines, mapping) {
    UPLOAD — MAP + COMMON + RPY
 ====================================================== */
 
-const type = detectType(originalname, buffer);
 app.post("/Upload", upload.array("files"), (req, res) => {
     if (!req.files?.length)
         return res.status(400).json({ error: "No files uploaded" });
@@ -487,7 +486,7 @@ app.post("/Upload", upload.array("files"), (req, res) => {
     for (const file of req.files) {
         const id = uuidv4();
         const { originalname, buffer } = file;
-        const type = detectType(originalname);
+        const type = detectType(originalname, buffer);
 
         if (type === "rpgmv-json") {
             try {
@@ -684,3 +683,4 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
