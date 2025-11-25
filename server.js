@@ -42,6 +42,46 @@ function detectType(filename, buffer = "") {
 }
 
 /* ======================================================
+   FILTER RPGM COMMON EVENTS
+====================================================== */
+
+function isBadRPGMLine(str) {
+    if (!str) return true;
+
+    const s = str.trim();
+
+    if (!s) return true; 
+    if (/^\d+$/.test(s)) return true;  
+    if (/^player$/i.test(s)) return true;
+    if (/^end$/i.test(s)) return true;
+    if (/^\\i\[\d+\]$/i.test(s)) return true;  
+    if (/^\\i\[\d+\]\d+$/i.test(s)) return true;  
+
+    return false;
+}
+
+/* ======================================================
+   FILTER RPGM MAPXXX.json
+====================================================== */
+
+function isBadMapLine(str) {
+    if (!str) return true;
+
+    const s = str.trim();
+
+    if (!s) return true;
+    if (/^\d+$/.test(s)) return true;
+    if (/^player$/i.test(s)) return true;
+    if (/^end$/i.test(s)) return true;
+
+    if (/^POPTEXT/i.test(s)) return true;
+    if (/^\\fn/i.test(s)) return true;
+    if (/^\\i\[\d+\]/i.test(s)) return true;
+
+    return false;
+}
+
+/* ======================================================
    1) Extract MV CommonEvents.json
 ====================================================== */
 
@@ -57,6 +97,9 @@ function extractMVTextAndMapping(commonEvents) {
             const params = cmd.parameters || [];
 
             if ((code === 401 || code === 405) && typeof params[0] === "string") {
+
+                if (isBadRPGMLine(params[0])) return;
+
                 lines.push(params[0]);
                 mapping.push({ evIndex, cmdIndex, paramIndex: 0 });
             }
@@ -123,8 +166,12 @@ function extractMapTextAndMapping(mapJson) {
                 const params = cmd.parameters || [];
 
                 if ((code === 401 || code === 405) && typeof params[0] === "string") {
+
+                    if (isBadMapLine(params[0])) return;
+
                     lines.push(params[0]);
                     mapping.push({
+
                         type: "event",
                         eventId, pageIndex,
                         cmdIndex, paramIndex: 0
@@ -373,6 +420,10 @@ function extractTyranoTextAndMapping(source) {
         if (line.startsWith("[eval") || line.startsWith("eval")) continue;
 
         if (/^#[A-Za-z0-9_]+/.test(line)) continue; 
+
+        if (/function\s*\(/.test(line)) continue;
+        if (/[{}();=]/.test(line)) continue;
+        if (/^\w+\.\w+\(/.test(line)) continue;
 
         const mHead = raw.match(/^(\s*(\[[^\]]*\]\s*)*)/);
         const prefix = mHead ? mHead[0] : "";
@@ -683,6 +734,7 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
 
