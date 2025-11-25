@@ -137,61 +137,62 @@ function insertRenpyTextBack(source, newLines, mapping) {
 /* ========================================================================
    POST /Upload
 ======================================================================== */
-app.post("/Upload", upload.single("file"), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+app.post("/Upload", upload.array("files"), (req, res) => {
+    if (!req.files || req.files.length === 0)
+        return res.status(400).json({ error: "No files uploaded" });
 
-    const { originalname, buffer } = req.file;
-    const type = detectType(originalname);
-    const id = uuidv4();
+    const results = [];
 
-    // ----- MV/MZ JSON -----
-    if (type === "rpgmv-json") {
-        try {
-            const obj = JSON.parse(buffer.toString("utf8"));
-            const { lines, mapping } = extractMVTextAndMapping(obj);
+    for (const file of req.files) {
+        const { originalname, buffer } = file;
+        const type = detectType(originalname);
+        const id = uuidv4();
+
+        // Ren’Py script (.rpy)
+        if (type === "renpy-script") {
+            const source = buffer.toString("utf8");
+            const { lines, mapping } = extractRenpyTextAdvanced(source);
 
             store.set(id, {
                 type,
                 name: originalname,
-                mvRaw: obj,
-                mvMapping: mapping,
+                renpySource: source,
+                renpyMapping: mapping,
                 lines
             });
 
-            return res.json({ id, type, name: originalname, lines });
-        } catch (e) {
-            return res.status(400).json({ error: "Invalid JSON" });
+            results.push({ id, type, name: originalname, lines });
+            continue;
         }
+
+        // MV/MZ JSON
+        if (type === "rpgmv-json") {
+            try {
+                const obj = JSON.parse(buffer.toString("utf8"));
+                const { lines, mapping } = extractMVTextAndMapping(obj);
+
+                store.set(id, {
+                    type,
+                    name: originalname,
+                    mvRaw: obj,
+                    mvMapping: mapping,
+                    lines
+                });
+
+                results.push({ id, type, name: originalname, lines });
+                continue;
+            } catch {
+                results.push({ error: "Invalid JSON", name: originalname });
+                continue;
+            }
+        }
+
+        // unsupported
+        store.set(id, { type, name: originalname, rawBuffer: buffer });
+        results.push({ id, type, name: originalname, message: "Not supported yet." });
     }
 
-    // ----- Ren'Py .rpy -----
-    if (type === "renpy-script") {
-        const source = buffer.toString("utf8");
-        const { lines, mapping } = extractRenpyTextAndMapping(source);
-
-        store.set(id, {
-            type,
-            name: originalname,
-            renpySource: source,
-            renpyMapping: mapping,
-            lines
-        });
-
-        return res.json({ id, type, name: originalname, lines });
-    }
-
-    store.set(id, {
-        type,
-        name: originalname,
-        rawBuffer: buffer
-    });
-
-    return res.json({
-        id,
-        type,
-        name: originalname,
-        message: "This file type is not supported yet."
-    });
+    res.json({ files: results });
 });
 
 /* ========================================================================
@@ -259,3 +260,4 @@ app.get("/", (req, res) => {
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
