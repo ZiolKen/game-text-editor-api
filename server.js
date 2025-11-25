@@ -368,3 +368,11 @@ app.get("/", (req, res) => {
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
+app.get("/debug-code", (req, res) => {
+  const fs = require("fs");
+  const path = require("path");
+  const file = path.join(__dirname, "server.js");
+  const code = fs.readFileSync(file, "utf8");
+  res.type("text/plain").send(code);
+});
