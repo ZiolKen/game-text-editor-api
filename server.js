@@ -12,17 +12,20 @@ app.use(express.json({ limit: "500mb" }));
 // RAM storage
 const store = new Map();
 
+// =====================
 // Detect file type
+// =====================
 function detectType(filename) {
     const f = filename.toLowerCase();
 
     if (f.endsWith(".json")) return "rpgmv-json";
+    if (f.endsWith(".rpy")) return "renpy-script";
     if (f.endsWith(".rvdata2")) return "rvdata2";
     if (f.endsWith(".wolf")) return "wolf";
-    if (f.endsWith(".ks")) return "kirikiriscript";
     if (f.endsWith(".rpa")) return "renpy-rpa";
     if (f.endsWith(".rpyc")) return "renpy-rpyc";
     if (f.endsWith(".xp3")) return "xp3archive";
+    if (f.endsWith(".ks")) return "kirikiriscript";
 
     return "unknown";
 }
@@ -92,7 +95,47 @@ function insertMVTextBack(commonEvents, newLines, mapping) {
 }
 
 /* ========================================================================
-   UPLOAD
+   Ren'Py .rpy — Extract & Reinsert "dialogue"
+======================================================================== */
+
+function extractRenpyTextAndMapping(source) {
+    const regex = /"([^"\\]*(?:\\.[^"\\]*)*)"/g;
+    const lines = [];
+    const mapping = [];
+    let match;
+
+    while ((match = regex.exec(source)) !== null) {
+        lines.push(match[1]); 
+        mapping.push({ start: match.index, end: regex.lastIndex });
+    }
+
+    return { lines, mapping };
+}
+
+function insertRenpyTextBack(source, newLines, mapping) {
+    let result = "";
+    let lastIndex = 0;
+
+    for (let i = 0; i < mapping.length && i < newLines.length; i++) {
+        const m = mapping[i];
+        const text = newLines[i] ?? "";
+
+        result += source.slice(lastIndex, m.start);
+
+        const escaped = text
+            .replace(/\\/g, "\\\\")
+            .replace(/"/g, '\\"');
+
+        result += `"${escaped}"`;
+        lastIndex = m.end;
+    }
+
+    result += source.slice(lastIndex);
+    return result;
+}
+
+/* ========================================================================
+   POST /Upload
 ======================================================================== */
 app.post("/Upload", upload.single("file"), (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -101,7 +144,7 @@ app.post("/Upload", upload.single("file"), (req, res) => {
     const type = detectType(originalname);
     const id = uuidv4();
 
-    // MV/MZ JSON
+    // ----- MV/MZ JSON -----
     if (type === "rpgmv-json") {
         try {
             const obj = JSON.parse(buffer.toString("utf8"));
@@ -110,35 +153,39 @@ app.post("/Upload", upload.single("file"), (req, res) => {
             store.set(id, {
                 type,
                 name: originalname,
-                raw: obj,
-                lines,
-                mapping
+                mvRaw: obj,
+                mvMapping: mapping,
+                lines
             });
 
             return res.json({ id, type, name: originalname, lines });
         } catch (e) {
-            return res.json({ id, error: "Invalid JSON" });
+            return res.status(400).json({ error: "Invalid JSON" });
         }
     }
 
-    // Ren'Py RPA / RPYC (làm tiếp ở bước sau)
-    if (type === "renpy-rpa" || type === "renpy-rpyc") {
+    // ----- Ren'Py .rpy -----
+    if (type === "renpy-script") {
+        const source = buffer.toString("utf8");
+        const { lines, mapping } = extractRenpyTextAndMapping(source);
+
         store.set(id, {
             type,
             name: originalname,
-            rawBuffer: buffer
+            renpySource: source,
+            renpyMapping: mapping,
+            lines
         });
 
-        return res.json({
-            id,
-            type,
-            name: originalname,
-            message: "Ren'Py file loaded. Extracting support coming next."
-        });
+        return res.json({ id, type, name: originalname, lines });
     }
 
-    // unknown
-    store.set(id, { type, name: originalname, rawBuffer: buffer });
+    store.set(id, {
+        type,
+        name: originalname,
+        rawBuffer: buffer
+    });
+
     return res.json({
         id,
         type,
@@ -148,13 +195,13 @@ app.post("/Upload", upload.single("file"), (req, res) => {
 });
 
 /* ========================================================================
-   EDIT GET
+   GET /Edit/:id
 ======================================================================== */
 app.get("/Edit/:id", (req, res) => {
     const item = store.get(req.params.id);
     if (!item) return res.status(404).json({ error: "Not found" });
 
-    if (item.type === "rpgmv-json") {
+    if (item.type === "rpgmv-json" || item.type === "renpy-script") {
         return res.json({
             id: req.params.id,
             type: item.type,
@@ -167,20 +214,38 @@ app.get("/Edit/:id", (req, res) => {
 });
 
 /* ========================================================================
-   EDIT SAVE
+   POST /Edit/:id (SAVE)
 ======================================================================== */
 app.post("/Edit/:id", (req, res) => {
     const item = store.get(req.params.id);
     if (!item) return res.status(404).json({ error: "Not found" });
 
+    const newLines = req.body.lines;
+    if (!Array.isArray(newLines)) {
+        return res.status(400).json({ error: "Invalid lines payload" });
+    }
+
+    // MV/MZ
     if (item.type === "rpgmv-json") {
-        const newLines = req.body.lines;
-
-        const updated = insertMVTextBack(item.raw, newLines, item.mapping);
+        const updated = insertMVTextBack(item.mvRaw, newLines, item.mvMapping);
         const jsonText = JSON.stringify(updated, null, 2);
-        const buf = Buffer.from(jsonText);
+        const buf = Buffer.from(jsonText, "utf8");
 
-        res.setHeader("Content-Type", "application/json");
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="${item.name}"`);
+        return res.send(buf);
+    }
+
+    // Ren'Py .rpy
+    if (item.type === "renpy-script") {
+        const updated = insertRenpyTextBack(
+            item.renpySource,
+            newLines,
+            item.renpyMapping
+        );
+        const buf = Buffer.from(updated, "utf8");
+
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Content-Disposition", `attachment; filename="${item.name}"`);
         return res.send(buf);
     }
@@ -192,4 +257,5 @@ app.get("/", (req, res) => {
     res.send("Backend is running.");
 });
 
-app.listen(10000, () => console.log("Server running on 10000"));
+const port = process.env.PORT || 10000;
+app.listen(port, () => console.log("Server running on", port));
