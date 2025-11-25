@@ -9,11 +9,12 @@ const upload = multer({ storage: multer.memoryStorage() });
 app.use(cors());
 app.use(express.json({ limit: "500mb" }));
 
+// In-memory store
 const store = new Map();
 
-// =====================
-// Detect file type
-// =====================
+/* ======================================================
+   Detect file type
+====================================================== */
 function detectType(filename) {
     const f = filename.toLowerCase();
 
@@ -29,10 +30,9 @@ function detectType(filename) {
     return "unknown";
 }
 
-/* ========================================================================
-   1) MV/MZ — Extract & Reinsert text
-======================================================================== */
-
+/* ======================================================
+   1) Extract MV CommonEvents.json
+====================================================== */
 function extractMVTextAndMapping(commonEvents) {
     const lines = [];
     const mapping = [];
@@ -44,26 +44,25 @@ function extractMVTextAndMapping(commonEvents) {
             const code = cmd.code;
             const params = cmd.parameters || [];
 
-            // message / scroll text
             if ((code === 401 || code === 405) && typeof params[0] === "string") {
                 lines.push(params[0]);
                 mapping.push({ evIndex, cmdIndex, paramIndex: 0 });
             }
-            // choices
             else if (code === 102 && Array.isArray(params[0])) {
-                params[0].forEach((choice, choiceIndex) => {
+                params[0].forEach((choice, ci) => {
                     if (typeof choice === "string") {
                         lines.push(choice);
-                        mapping.push({ evIndex, cmdIndex, paramIndex: [0, choiceIndex] });
+                        mapping.push({
+                            evIndex, cmdIndex,
+                            paramIndex: [0, ci]
+                        });
                     }
                 });
             }
-            // when choice
             else if (code === 402 && typeof params[1] === "string") {
                 lines.push(params[1]);
                 mapping.push({ evIndex, cmdIndex, paramIndex: 1 });
             }
-            // labels
             else if ((code === 118 || code === 119) && typeof params[0] === "string") {
                 lines.push(params[0]);
                 mapping.push({ evIndex, cmdIndex, paramIndex: 0 });
@@ -80,19 +79,120 @@ function insertMVTextBack(commonEvents, newLines, mapping) {
         const ev = commonEvents[m.evIndex];
         const cmd = ev.list[m.cmdIndex];
 
-        if (Array.isArray(m.paramIndex)) {
+        if (Array.isArray(m.paramIndex))
             cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
-        } else {
+        else
             cmd.parameters[m.paramIndex] = text;
-        }
     });
 
     return commonEvents;
 }
 
-/* ========================================================================
-   2) Ren’Py .rpy — regex & helpers (theo code bạn đưa)
-======================================================================== */
+/* ======================================================
+   2) Extract MapXXX.json
+====================================================== */
+function extractMapTextAndMapping(mapJson) {
+    const lines = [];
+    const mapping = [];
+
+    if (!mapJson.events) return { lines, mapping };
+
+    Object.keys(mapJson.events).forEach(eventId => {
+        const ev = mapJson.events[eventId];
+        if (!ev || !Array.isArray(ev.pages)) return;
+
+        ev.pages.forEach((page, pageIndex) => {
+            if (!page.list) return;
+
+            page.list.forEach((cmd, cmdIndex) => {
+
+                const code = cmd.code;
+                const params = cmd.parameters || [];
+
+                if ((code === 401 || code === 405) && typeof params[0] === "string") {
+                    lines.push(params[0]);
+                    mapping.push({
+                        type: "event",
+                        eventId, pageIndex,
+                        cmdIndex, paramIndex: 0
+                    });
+                }
+                else if (code === 102 && Array.isArray(params[0])) {
+                    params[0].forEach((choice, ci) => {
+                        if (typeof choice === "string") {
+                            lines.push(choice);
+                            mapping.push({
+                                type: "event",
+                                eventId, pageIndex,
+                                cmdIndex,
+                                paramIndex: [0, ci]
+                            });
+                        }
+                    });
+                }
+                else if (code === 402 && typeof params[1] === "string") {
+                    lines.push(params[1]);
+                    mapping.push({
+                        type: "event",
+                        eventId, pageIndex,
+                        cmdIndex, paramIndex: 1
+                    });
+                }
+                else if (code === 355 && typeof params[0] === "string") {
+                    const m = params[0].match(/"([^"]+)"/);
+                    if (m) {
+                        lines.push(m[1]);
+                        mapping.push({
+                            type: "script",
+                            eventId, pageIndex, cmdIndex,
+                            extractFull: params[0]
+                        });
+                    }
+                }
+                else if ((code === 118 || code === 119) && typeof params[0] === "string") {
+                    lines.push(params[0]);
+                    mapping.push({
+                        type: "event",
+                        eventId, pageIndex,
+                        cmdIndex, paramIndex: 0
+                    });
+                }
+            });
+        });
+    });
+
+    return { lines, mapping };
+}
+
+function insertMapTextBack(mapJson, newLines, mapping) {
+    mapping.forEach((m, i) => {
+        const newText = newLines[i];
+        const ev = mapJson.events[m.eventId];
+        if (!ev) return;
+
+        const page = ev.pages[m.pageIndex];
+        if (!page) return;
+
+        const cmd = page.list[m.cmdIndex];
+        if (!cmd) return;
+
+        if (m.type === "event") {
+            if (Array.isArray(m.paramIndex))
+                cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = newText;
+            else
+                cmd.parameters[m.paramIndex] = newText;
+        }
+        else if (m.type === "script") {
+            cmd.parameters[0] = m.extractFull.replace(/"([^"]+)"/, `"${newText}"`);
+        }
+    });
+
+    return mapJson;
+}
+
+/* ======================================================
+   3) Ren'Py extract
+====================================================== */
 
 const RGX_ASSET_FILE = /\.(png|jpe?g|gif|webp|mp3|ogg|wav|mp4|webm|m4a|avi|mov|ttf|otf|pfb|pfm|ps|woff2?|eot|svg)["']?$/i;
 const RGX_ASSET_PATH = /["'](images?|audio|music|voice|bg|sfx|movie|video|sounds?)\//i;
@@ -235,44 +335,61 @@ function insertRenpyTextBackAdvanced(source, newLines, mapping) {
     return linesArr.join("\n");
 }
 
-/* ========================================================================
-   UPLOAD (MULTI FILE)
-//   Trả về: { files: [ {id, name, type, lines?} ] }
-======================================================================== */
+/* ======================================================
+   UPLOAD — MAP + COMMON + RPY
+====================================================== */
+
 app.post("/Upload", upload.array("files"), (req, res) => {
-    if (!req.files || req.files.length === 0)
+    if (!req.files?.length)
         return res.status(400).json({ error: "No files uploaded" });
 
     const results = [];
 
     for (const file of req.files) {
+        const id = uuidv4();
         const { originalname, buffer } = file;
         const type = detectType(originalname);
-        const id = uuidv4();
 
-        // MV/MZ JSON
         if (type === "rpgmv-json") {
             try {
                 const obj = JSON.parse(buffer.toString("utf8"));
-                const { lines, mapping } = extractMVTextAndMapping(obj);
 
-                store.set(id, {
-                    type,
-                    name: originalname,
-                    mvRaw: obj,
-                    mvMapping: mapping,
-                    lines
-                });
+                // CommonEvents.json → array
+                if (Array.isArray(obj)) {
+                    const { lines, mapping } = extractMVTextAndMapping(obj);
+                    store.set(id, {
+                        type,
+                        name: originalname,
+                        mvRaw: obj,
+                        mvMapping: mapping,
+                        lines
+                    });
+                    results.push({ id, type, name: originalname, lines });
+                }
+                // MapXXX.json → object
+                else if (obj.events) {
+                    const { lines, mapping } = extractMapTextAndMapping(obj);
+                    store.set(id, {
+                        type,
+                        name: originalname,
+                        mapRaw: obj,
+                        mapMapping: mapping,
+                        lines
+                    });
+                    results.push({ id, type, name: originalname, lines });
+                }
+                else {
+                    results.push({ name: originalname, error: "Unsupported JSON format" });
+                }
 
-                results.push({ id, type, name: originalname, lines });
                 continue;
-            } catch (e) {
+            } catch {
                 results.push({ name: originalname, error: "Invalid JSON" });
                 continue;
             }
         }
 
-        // Ren'Py .rpy
+        // RenPy
         if (type === "renpy-script") {
             const src = buffer.toString("utf8");
             const { lines, mapping } = extractRenpyTextAdvanced(src);
@@ -289,12 +406,10 @@ app.post("/Upload", upload.array("files"), (req, res) => {
             continue;
         }
 
-        // unsupported -> lưu thô
+        // Unsupported
         store.set(id, { type, name: originalname, rawBuffer: buffer });
         results.push({
-            id,
-            type,
-            name: originalname,
+            id, type, name: originalname,
             message: "This file type is not supported yet."
         });
     }
@@ -302,77 +417,71 @@ app.post("/Upload", upload.array("files"), (req, res) => {
     res.json({ files: results });
 });
 
-/* ========================================================================
-   GET /Edit/:id
-======================================================================== */
+/* ======================================================
+   LOAD /Edit/:id
+====================================================== */
 app.get("/Edit/:id", (req, res) => {
     const item = store.get(req.params.id);
     if (!item) return res.status(404).json({ error: "Not found" });
 
-    if (item.type === "rpgmv-json" || item.type === "renpy-script") {
+    if (item.lines)
         return res.json({
             id: req.params.id,
             type: item.type,
             name: item.name,
             lines: item.lines
         });
-    }
 
     return res.status(501).json({ error: "Not supported yet." });
 });
 
-/* ========================================================================
-   POST /Edit/:id (SAVE)
-======================================================================== */
+/* ======================================================
+   SAVE /Edit/:id
+====================================================== */
 app.post("/Edit/:id", (req, res) => {
     const item = store.get(req.params.id);
     if (!item) return res.status(404).json({ error: "Not found" });
 
     const newLines = req.body.lines;
-    if (!Array.isArray(newLines)) {
-        return res.status(400).json({ error: "Invalid 'lines' payload" });
-    }
+    if (!Array.isArray(newLines))
+        return res.status(400).json({ error: "Invalid lines payload" });
 
-    // MV/MZ JSON
-    if (item.type === "rpgmv-json") {
+    // CommonEvents
+    if (item.mvRaw && item.mvMapping) {
         const updated = insertMVTextBack(item.mvRaw, newLines, item.mvMapping);
-        const jsonText = JSON.stringify(updated, null, 2);
-        const buf = Buffer.from(jsonText, "utf8");
-
-        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        const buf = Buffer.from(JSON.stringify(updated, null, 2), "utf8");
         res.setHeader("Content-Disposition", `attachment; filename="${item.name}"`);
         return res.send(buf);
     }
 
-    // Ren'Py .rpy
-    if (item.type === "renpy-script") {
-        const updatedSrc = insertRenpyTextBackAdvanced(
+    // Map
+    if (item.mapRaw && item.mapMapping) {
+        const updated = insertMapTextBack(item.mapRaw, newLines, item.mapMapping);
+        const buf = Buffer.from(JSON.stringify(updated, null, 2), "utf8");
+        res.setHeader("Content-Disposition", `attachment; filename="${item.name}"`);
+        return res.send(buf);
+    }
+
+    // RenPy
+    if (item.renpySource) {
+        const updated = insertRenpyTextBackAdvanced(
             item.renpySource,
             newLines,
             item.renpyMapping
         );
-        const buf = Buffer.from(updatedSrc, "utf8");
-
-        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        const buf = Buffer.from(updated, "utf8");
         res.setHeader("Content-Disposition", `attachment; filename="${item.name}"`);
         return res.send(buf);
     }
 
-    return res.status(501).json({ error: "Saving not supported yet" });
+    return res.status(501).json({ error: "Saving not supported" });
 });
 
-// health check
-app.get("/", (req, res) => {
-    res.send("Backend is running.");
-});
+/* ======================================================
+   RUN SERVER
+====================================================== */
+
+app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
-
-app.get("/debug-code", (req, res) => {
-  const fs = require("fs");
-  const path = require("path");
-  const file = path.join(__dirname, "server.js");
-  const code = fs.readFileSync(file, "utf8");
-  res.type("text/plain").send(code);
-});
