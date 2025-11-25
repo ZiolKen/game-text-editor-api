@@ -261,3 +261,126 @@ app.get("/", (req, res) => {
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
 
+const RGX_ASSET_FILE = /\.(png|jpe?g|gif|webp|mp3|ogg|wav|mp4|webm|m4a|avi|mov|ttf|otf|pfb|pfm|ps|woff2?|eot|svg)["']?$/i;
+const RGX_ASSET_PATH = /["'](images?|audio|music|voice|bg|sfx|movie|video|sounds?)\//i;
+
+const RGX_FULL_STRING = /^"((?:\\.|[^"\\])*)"$/;
+const RGX_STRING_INSIDE = /"((?:\\.|[^"\\])*)"/;
+const RGX_DICT = /{\s*dialog:\s*["']([\s\S]*?)["']\s*,\s*line:\s*(\d+)\s*}/g;
+const RGX_ANY_STRING = /"([^"\\]|\\.)*"|'([^'\\]|\\.)*'/g;
+
+const DIALOG_BLACKLIST = [
+    "screen", "background", "outlines", "outline_scaling", "easeout", "hovered",
+    "unhovered", "font", "text", "text_font", "size", "key", "if", "else", "at",
+    "def", "config", "add", "action", "align", "image", "show", "play", "sound",
+    "move", "import", "with", "jump", "menu", "scene", "init", "hide", "queue",
+    "transform", "define", "pause", "return", "python"
+];
+
+function isDialogLine(line) {
+    const raw = line;
+    const trimmed = raw.trim();
+    if (!trimmed) return false;
+
+    // remove trailing comments
+    let final = "";
+    let inS = false, inD = false;
+    for (let i = 0; i < trimmed.length; i++) {
+        const c = trimmed[i];
+        const prev = trimmed[i - 1];
+
+        if (c === "'" && !inD && prev !== "\\") inS = !inS;
+        else if (c === '"' && !inS && prev !== "\\") inD = !inD;
+        else if (c === "#" && !inS && !inD) break;
+
+        final += c;
+    }
+
+    final = final.trim();
+    if (!final) return false;
+
+    if (/^(label|style|if|else|jump|menu|scene|init|define|transform|image|show|hide|play|stop|pause|return|python)\b/i.test(final))
+        return false;
+
+    if (/^[\w\s]*=[^"'`]/.test(final)) return false;
+
+    if (RGX_ASSET_FILE.test(final)) return false;
+    if (RGX_ASSET_PATH.test(final)) return false;
+
+    const outside = final.replace(RGX_ANY_STRING, "");
+    for (const kw of DIALOG_BLACKLIST) {
+        if (new RegExp(`\\b${kw}\\b`, "i").test(outside)) {
+            if (!/^[a-zA-Z_][\w]*\s+["']/.test(final)) return false;
+        }
+    }
+
+    if (/^[\w\s]+:\s*["'].*["']/.test(final)) return true;
+    if (RGX_FULL_STRING.test(final)) return true;
+    if (/^[\w_]+\s+"(.+?)"/.test(final)) return true;
+
+    if (RGX_STRING_INSIDE.test(final)) {
+        const m = final.match(RGX_STRING_INSIDE);
+        if (!m) return false;
+
+        const text = m[1].trim();
+        if (!text) return false;
+        if (/^[.\s]+$/.test(text)) return false;
+
+        return true;
+    }
+
+    if (/{.*?}/.test(final) && /[A-Za-z0-9\u00C0-\u1EF9]/.test(final))
+        return true;
+
+    return false;
+}
+
+function escapeDialog(str) {
+    return str
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"')
+        .replace(/\r?\n/g, "\\n");
+}
+
+function extractRenpyTextAdvanced(source) {
+    const lines = [];
+    const mapping = [];
+
+    const srcLines = source.split("\n");
+
+    for (let i = 0; i < srcLines.length; i++) {
+        const line = srcLines[i];
+
+        if (!isDialogLine(line)) continue;
+
+        let m;
+        while ((m = RGX_ANY_STRING.exec(line)) !== null) {
+            const rawFull = m[0];
+            const textInside = rawFull.slice(1, -1);
+            const start = source.indexOf(rawFull);
+
+            lines.push(textInside);
+
+            mapping.push({
+                index: i,
+                raw: rawFull,
+                text: textInside
+            });
+        }
+    }
+
+    return { lines, mapping };
+}
+
+function insertRenpyTextBackAdvanced(source, newLines, mapping) {
+    let out = source;
+
+    for (let i = mapping.length - 1; i >= 0; i--) {
+        const m = mapping[i];
+        const replacement = `"${escapeDialog(newLines[i] || "")}"`;
+
+        out = out.replace(m.raw, replacement);
+    }
+
+    return out;
+}
