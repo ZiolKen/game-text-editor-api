@@ -25,16 +25,22 @@ function detectType(filename, buffer = "") {
     if (f.endsWith(".ks")) {
         const text = buffer.toString();
 
-        // Kirikiri KAG: @tag , 「dialog」 , *label
-        if (/@[a-zA-Z]/.test(text) || /「[^」]+」/.test(text) || /^\*/m.test(text)) {
-            return "kag-ks";
-        }
+        // --- KAG KIRIKIRI CHECK ---
+        if (/^\s*@\w+/m.test(text)) return "kag-ks";
 
-        // TyranoScript: [tag], ;comment, plain dialog
-        if (/\[[^\]]+\]/.test(text)) {
-            return "tyrano-ks";
-        }
+        if (/^\s*\*[a-zA-Z0-9_]+/m.test(text)) return "kag-ks";
 
+        if (/「[^」]+」/.test(text)) return "kag-ks";
+
+
+        // --- TYRANO CHECK ---
+        if (/\[[a-zA-Z0-9_]+[^\]]*\]/.test(text)) return "tyrano-ks";
+
+        if (/\[iscript\]/i.test(text)) return "tyrano-ks";
+
+        if (/\[(cm|tb_|eval|jump)/i.test(text)) return "tyrano-ks";
+
+        // Default → Tyrano
         return "tyrano-ks";
     }
 
@@ -683,4 +689,5 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
