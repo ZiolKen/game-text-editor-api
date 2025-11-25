@@ -86,36 +86,35 @@ function extractMVTextAndMapping(commonEvents) {
                     mapping.push({ evIndex, cmdIndex, paramIndex: 0 });
                 }
             }
+
             else if (code === 102 && Array.isArray(params[0])) {
-               params[0].forEach((choice, ci) => {
-                   if (typeof choice === "string" && !isGarbageText(choice)) {
-                       lines.push(choice);
-                       mapping.push({
-                           type: "event",
-                           eventId, pageIndex,
-                           cmdIndex,
-                           paramIndex:[0, ci]
-                       });
-                   }
-               });
+                params[0].forEach((choice, ci) => {
+                    if (typeof choice === "string" && !isGarbageText(choice)) {
+                        lines.push(choice);
+                        mapping.push({
+                            evIndex, cmdIndex,
+                            paramIndex: [0, ci]
+                        });
+                    }
+                });
             }
-            if (code === 402 && typeof params[1] === "string") {
+
+            else if (code === 402 && typeof params[1] === "string") {
                 if (!isGarbageText(params[1])) {
                     lines.push(params[1]);
                     mapping.push({
-                        type:"event",
-                        eventId, pageIndex,
-                        cmdIndex, paramIndex:1
+                        evIndex, cmdIndex,
+                        paramIndex: 1
                     });
                 }
             }
-            if ((code === 118 || code === 119) && typeof params[0] === "string") {
+
+            else if ((code === 118 || code === 119) && typeof params[0] === "string") {
                 if (!isGarbageText(params[0])) {
                     lines.push(params[0]);
                     mapping.push({
-                        type:"event",
-                        eventId, pageIndex,
-                        cmdIndex, paramIndex:0
+                        evIndex, cmdIndex,
+                        paramIndex: 0
                     });
                 }
             }
@@ -733,6 +732,7 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
 
