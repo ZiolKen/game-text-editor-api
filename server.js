@@ -1,3 +1,7 @@
+/* ======================================================
+      CONFIG
+====================================================== */
+
 const express = require("express");
 const multer = require("multer");
 const cors = require("cors");
@@ -750,14 +754,3 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
-
-
-
-
-
-
-
-
-
-
-
