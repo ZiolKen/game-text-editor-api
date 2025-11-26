@@ -466,35 +466,83 @@ function extractKAGTextAndMapping(source) {
     const out = [];
     const mapping = [];
 
-    const rgx = /"([^"]+)"|「([^」]+)」/g;
+    let inIscript = false;
+
+    const isGarbage = (txt) => {
+        if (!txt) return true;
+        const t = txt.trim();
+
+        return (
+            t === "" ||
+            /^;+/.test(t) || 
+            /^\*.+/.test(t) ||
+            /^\[.+\]$/.test(t) ||
+            /^[@].+/.test(t) ||
+            /^【.*?】$/.test(t) ||
+            /^「§」$/.test(t) ||
+            /^§$/.test(t) ||
+            /^[\[\]{}()]+$/.test(t) ||
+            /^[=><+\-]+$/.test(t) ||
+            /^#/.test(t)
+        );
+    };
 
     for (let i = 0; i < lines.length; i++) {
-        let line = lines[i].trim();
+        const raw = lines[i];
+        const t = raw.trim();
+        let textValue = "";
  
-        if (!line) continue;
-        if (line.startsWith("@")) continue;
-        if (line.startsWith("*")) continue;
-        if (line.startsWith(";")) continue;
-        if (/^\[.*?\]$/.test(line)) continue;   
-        if (/^\{.*\}$/.test(line)) continue;     
-
-        let m, idx = 0;
-        rgx.lastIndex = 0;
-
-        while ((m = rgx.exec(line)) !== null) {
-            const text = m[1] || m[2];
+        if (t.startsWith("[iscript]")) { inIscript = true; continue; }
+        if (t.startsWith("[endscript]")) { inIscript = false; continue; }
+        if (inIscript) continue;
  
-            if (isGarbageText(text)) continue;
-
-            out.push(text);
-            mapping.push({
-                lineIndex: i,
-                stringIndex: idx,
-                quoteType: m[1] ? '"' : '「」'
-            });
-
-            idx++;
+        if (isGarbage(t)) continue;
+ 
+        const evalMatch = t.match(/@eval\s+exp=sf\.(?:name\d?|hnam\d?)="(.*?)"/);
+        if (evalMatch) {
+            textValue = evalMatch[1];
         }
+ 
+        else {
+            const match = t.match(/text=(["'])(.*?)\1/);
+            if (match) {
+                textValue = match[2];
+            }
+ 
+            else {
+                const quoteMatch = t.match(/「(.*?)」/);
+                if (quoteMatch) {
+                    textValue = quoteMatch[1];
+                }
+ 
+                else if (/emb\s+exp="sf\.hnam/.test(t) || /。$/.test(t)) {
+                    textValue = raw.replace(/^;　?/, "");
+                }
+ 
+                else if (/^\[cname\s+chara=.*?\]/.test(t)) {
+                    textValue = t
+                        .replace(/^\[cname\s+chara=.*?\]/, "")
+                        .replace(/\[np\]/gi, "")
+                        .trim();
+                }
+ 
+                else { 
+                    if (/[A-Za-z0-9\u3000-\u9FFF]/.test(t)) { 
+                        if (!/^[\\\w\[\]<>\/=]+$/.test(t)) {
+                            textValue = raw;
+                        }
+                    }
+                }
+            }
+        }
+ 
+        if (isGarbage(textValue)) continue;
+
+        out.push(textValue);
+        mapping.push({
+            lineIndex: i,
+            original: raw
+        });
     }
 
     return { lines: out, mapping };
@@ -742,4 +790,5 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
