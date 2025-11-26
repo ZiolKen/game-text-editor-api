@@ -49,6 +49,10 @@ function detectType(filename, buffer = "") {
    FILTER RPGM
 ====================================================== */
 
+/* ======================================================
+   FILTER RPGM
+====================================================== */
+
 function isGarbageText(str) {
     if (!str) return true;
 
@@ -82,6 +86,52 @@ function isGarbageText(str) {
     return false;
 }
 
+/* ==== RPGM helpers ==== */
+ 
+const RGX_RPGM_SCRIPT_STRING =
+    /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'/g;
+ .
+const RGX_RPGM_ASSET =
+    /\.(png|jpe?g|gif|bmp|webp|ogg|mp3|wav|m4a|mp4|webm|m4v)$/i;
+ 
+function pushRpgmLine(lines, mapping, text, meta) {
+    if (typeof text !== "string") return;
+    if (isGarbageText(text)) return;
+    lines.push(text);
+    mapping.push(meta);
+}
+ 
+function isRpgmMetaComment(str) {
+    if (!str) return true;
+    const t = str.trim();
+    if (!t) return true;
+ 
+    if (/^<[^>]+>$/.test(t)) return true; 
+    if (/^[A-Z0-9_]+$/.test(t)) return true; 
+    if (/^[A-Za-z_][A-Za-z0-9_]*:?$/.test(t)) return true;
+
+    return false;
+}
+ 
+function extractRpgmScriptStrings(script, cb) {
+    if (typeof script !== "string") return;
+
+    RGX_RPGM_SCRIPT_STRING.lastIndex = 0;
+    let m;
+    while ((m = RGX_RPGM_SCRIPT_STRING.exec(script)) !== null) {
+        const inner = (m[1] != null ? m[1] : m[2]) ?? "";
+        const value = inner;
+        const trimmed = value.trim();
+        if (!trimmed) continue;
+ 
+        if (!/\s/.test(trimmed) && RGX_RPGM_ASSET.test(trimmed)) continue;
+
+        if (isGarbageText(value)) continue;
+ 
+        cb(value, inner);
+    }
+}
+
 /* ======================================================
    1) Extract MV CommonEvents.json
 ====================================================== */
@@ -94,104 +144,74 @@ function extractMVTextAndMapping(commonEvents) {
         if (!ev || !Array.isArray(ev.list)) return;
 
         ev.list.forEach((cmd, cmdIndex) => {
+            if (!cmd) return;
             const code = cmd.code;
             const params = cmd.parameters || [];
+            const base = { evIndex, cmdIndex };
  
             if ((code === 401 || code === 405) && typeof params[0] === "string") {
-                if (!isGarbageText(params[0])) {
-                    lines.push(params[0]);
-                    mapping.push({ evIndex, cmdIndex, paramIndex: 0 });
-                }
+                pushRpgmLine(lines, mapping, params[0], {
+                    ...base,
+                    paramIndex: 0
+                });
             }
  
             else if (code === 102 && Array.isArray(params[0])) {
                 params[0].forEach((choice, ci) => {
-                    if (typeof choice === "string" && !isGarbageText(choice)) {
-                        lines.push(choice);
-                        mapping.push({
-                            evIndex, cmdIndex,
-                            paramIndex: [0, ci]
-                        });
-                    }
+                    pushRpgmLine(lines, mapping, choice, {
+                        ...base,
+                        paramIndex: [0, ci]
+                    });
                 });
             }
  
             else if (code === 402 && typeof params[1] === "string") {
-                if (!isGarbageText(params[1])) {
-                    lines.push(params[1]);
-                    mapping.push({
-                        evIndex, cmdIndex,
-                        paramIndex: 1
-                    });
-                }
+                pushRpgmLine(lines, mapping, params[1], {
+                    ...base,
+                    paramIndex: 1
+                });
             }
  
             else if ((code === 118 || code === 119) && typeof params[0] === "string") {
-                if (!isGarbageText(params[0])) {
-                    lines.push(params[0]);
+                pushRpgmLine(lines, mapping, params[0], {
+                    ...base,
+                    paramIndex: 0
+                });
+            }
+ 
+            else if ((code === 320 || code === 324) && typeof params[1] === "string") {
+                pushRpgmLine(lines, mapping, params[1], {
+                    ...base,
+                    paramIndex: 1
+                });
+            }
+ 
+            else if ((code === 108 || code === 408) && typeof params[0] === "string") {
+                const comment = params[0];
+                if (!isRpgmMetaComment(comment) && !isGarbageText(comment)) {
+                    lines.push(comment);
                     mapping.push({
-                        evIndex, cmdIndex,
-                        paramIndex: 0
+                        ...base,
+                        paramIndex: 0,
+                        kind: "comment"
                     });
                 }
             }
  
-            else if (code === 320 && typeof params[1] === "string") {
-                if (!isGarbageText(params[1])) {
-                    lines.push(params[1]);
+            else if (
+                (code === 355 || code === 655 || code === 356 || code === 656) &&
+                typeof params[0] === "string"
+            ) {
+                extractRpgmScriptStrings(params[0], (text, originalText) => {
+                    lines.push(text);
                     mapping.push({
-                        evIndex, cmdIndex,
-                        paramIndex: 1
+                        ...base,
+                        paramIndex: 0,
+                        type: "script",
+                        extractFull: params[0],
+                        originalText
                     });
-                }
-            }
- 
-            else if (code === 324 && typeof params[1] === "string") {
-                if (!isGarbageText(params[1])) {
-                    lines.push(params[1]);
-                    mapping.push({
-                        evIndex, cmdIndex,
-                        paramIndex: 1
-                    });
-                }
-            }
- 
-            else if ((code === 355 || code === 655) && typeof params[0] === "string") {
-                const matches = params[0].match(/"([^"]+)"/g);
-                if (matches) {
-                    matches.forEach(match => {
-                        const text = match.slice(1, -1);
-                        if (!isGarbageText(text)) {
-                            lines.push(text);
-                            mapping.push({
-                                evIndex, cmdIndex,
-                                paramIndex: 0,
-                                type: "script",
-                                extractFull: params[0],
-                                originalText: text
-                            });
-                        }
-                    });
-                }
-            }
- 
-            else if ((code === 356 || code === 656) && typeof params[0] === "string") {
-                const matches = params[0].match(/"([^"]+)"/g);
-                if (matches) {
-                    matches.forEach(match => {
-                        const text = match.slice(1, -1);
-                        if (!isGarbageText(text)) {
-                            lines.push(text);
-                            mapping.push({
-                                evIndex, cmdIndex,
-                                paramIndex: 0,
-                                type: "script",
-                                extractFull: params[0],
-                                originalText: text
-                            });
-                        }
-                    });
-                }
+                });
             }
         });
     });
@@ -202,6 +222,7 @@ function extractMVTextAndMapping(commonEvents) {
 function insertMVTextBack(commonEvents, newLines, mapping) {
     mapping.forEach((m, i) => {
         const text = newLines[i];
+        if (typeof text !== "string") return;
         const ev = commonEvents[m.evIndex];
         if (!ev) return;
 
@@ -240,87 +261,76 @@ function extractMapTextAndMapping(mapJson) {
         if (!ev || !Array.isArray(ev.pages)) return;
 
         ev.pages.forEach((page, pageIndex) => {
-            if (!page.list) return;
+            if (!Array.isArray(page.list)) return;
 
             page.list.forEach((cmd, cmdIndex) => {
+                if (!cmd) return;
                 const code = cmd.code;
                 const params = cmd.parameters || [];
+                const base = { type: "event", eventId, pageIndex, cmdIndex };
  
                 if ((code === 401 || code === 405) && typeof params[0] === "string") {
-                    if (!isGarbageText(params[0])) {
-                        lines.push(params[0]);
-                        mapping.push({ type:"event", eventId, pageIndex, cmdIndex, paramIndex:0 });
-                    }
-                } 
+                    pushRpgmLine(lines, mapping, params[0], {
+                        ...base,
+                        paramIndex: 0
+                    });
+                }
+ 
                 else if (code === 102 && Array.isArray(params[0])) {
                     params[0].forEach((choice, ci) => {
-                        if (typeof choice === "string" && !isGarbageText(choice)) {
-                            lines.push(choice);
-                            mapping.push({
-                                type: "event",
-                                eventId, pageIndex,
-                                cmdIndex,
-                                paramIndex:[0, ci]
-                            });
-                        }
+                        pushRpgmLine(lines, mapping, choice, {
+                            ...base,
+                            paramIndex: [0, ci]
+                        });
                     });
-                } 
+                }
+ 
                 else if (code === 402 && typeof params[1] === "string") {
-                    if (!isGarbageText(params[1])) {
-                        lines.push(params[1]);
-                        mapping.push({
-                            type:"event",
-                            eventId, pageIndex,
-                            cmdIndex, paramIndex:1
-                        });
-                    }
-                } 
-                else if ((code === 355 || code === 655) && typeof params[0] === "string") { 
-                    const matches = params[0].match(/"([^"]+)"/g);
-                    if (matches) {
-                        matches.forEach(match => {
-                            const text = match.slice(1, -1);  
-                            if (!isGarbageText(text)) {
-                                lines.push(text);
-                                mapping.push({
-                                    type: "script",
-                                    eventId, pageIndex, cmdIndex,
-                                    extractFull: params[0],
-                                    originalText: text
-                                });
-                            }
-                        });
-                    }
-                } 
+                    pushRpgmLine(lines, mapping, params[1], {
+                        ...base,
+                        paramIndex: 1
+                    });
+                }
+ 
                 else if ((code === 118 || code === 119) && typeof params[0] === "string") {
-                    if (!isGarbageText(params[0])) {
-                        lines.push(params[0]);
+                    pushRpgmLine(lines, mapping, params[0], {
+                        ...base,
+                        paramIndex: 0
+                    });
+                }
+ 
+                else if ((code === 320 || code === 324) && typeof params[1] === "string") {
+                    pushRpgmLine(lines, mapping, params[1], {
+                        ...base,
+                        paramIndex: 1
+                    });
+                }
+ 
+                else if ((code === 108 || code === 408) && typeof params[0] === "string") {
+                    const comment = params[0];
+                    if (!isRpgmMetaComment(comment) && !isGarbageText(comment)) {
+                        lines.push(comment);
                         mapping.push({
-                            type:"event",
-                            eventId, pageIndex,
-                            cmdIndex, paramIndex:0
+                            ...base,
+                            paramIndex: 0,
+                            kind: "comment"
                         });
                     }
-                } 
-                else if (code === 320 && typeof params[1] === "string") {
-                    if (!isGarbageText(params[1])) {
-                        lines.push(params[1]);
+                }
+ 
+                else if (
+                    (code === 355 || code === 655 || code === 356 || code === 656) &&
+                    typeof params[0] === "string"
+                ) {
+                    extractRpgmScriptStrings(params[0], (text, originalText) => {
+                        lines.push(text);
                         mapping.push({
-                            type:"event",
-                            eventId, pageIndex,
-                            cmdIndex, paramIndex:1
+                            ...base,
+                            type: "script",
+                            extractFull: params[0],
+                            originalText
                         });
-                    }
-                } 
-                else if (code === 324 && typeof params[1] === "string") {
-                    if (!isGarbageText(params[1])) {
-                        lines.push(params[1]);
-                        mapping.push({
-                            type:"event",
-                            eventId, pageIndex,
-                            cmdIndex, paramIndex:1
-                        });
-                    }
+                    });
                 }
             });
         });
@@ -332,6 +342,7 @@ function extractMapTextAndMapping(mapJson) {
 function insertMapTextBack(mapJson, newLines, mapping) {
     mapping.forEach((m, i) => {
         const newText = newLines[i];
+        if (typeof newText !== "string") return;
         const ev = mapJson.events[m.eventId];
         if (!ev) return;
 
@@ -951,6 +962,7 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
 
