@@ -54,7 +54,7 @@ function isGarbageText(str) {
 
     if (/^\d+$/.test(t)) return true;
 
-    if (/^(player|end|retry|correct|start|skip|skipit|theend|options|again)$/i.test(t)) return true;
+    if (/^(player|end|retry|correct|flag1|flag|start|skip|skipit|theend|options|again)$/i.test(t)) return true;
 
     if (/^TILESET[-_].+/i.test(t)) return true;
 
@@ -736,6 +736,7 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
 
