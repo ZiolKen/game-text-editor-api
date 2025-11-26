@@ -90,7 +90,7 @@ function isGarbageText(str) {
  
 const RGX_RPGM_SCRIPT_STRING =
     /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'/g;
- .
+
 const RGX_RPGM_ASSET =
     /\.(png|jpe?g|gif|bmp|webp|ogg|mp3|wav|m4a|mp4|webm|m4v)$/i;
  
@@ -962,6 +962,7 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
 
