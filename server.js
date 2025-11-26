@@ -50,29 +50,36 @@ function isGarbageText(str) {
 
     const t = str.trim();
 
-    if (!t) return true;
+    if (!t || t.length < 1) return true;
+    if (/^[\W_]+$/.test(t)) return true;
 
     if (/^\d+$/.test(t)) return true;
 
-    if (/^(player|end|retry|correct|flag1|flag|start|skip|skipit|theend|options|again)$/i.test(t)) return true;
+    if (/^\\[a-z]+\[\d+\]$/i.test(t)) return true;      
+    if (/^\\[a-z]+$/i.test(t)) return true;     
+    if (/^<br\/?>$/i.test(t)) return true;
+    if (/^<center>$/i.test(t)) return true;
 
-    if (/^TILESET[-_].+/i.test(t)) return true;
+    if (/^TILESET-/i.test(t)) return true;
+    if (/^POPTEXT-/i.test(t)) return true;
+    if (/^SWITCH-/i.test(t)) return true;
+    if (/^VARIABLE-/i.test(t)) return true;
 
-    if (/^POPTEXT[-_].+/i.test(t)) return true;
+    if (/^(retry|correct|start|skip|skipit|again|player|end|fail|flag|flag1|options|theend|greet)$/i.test(t)) return true;
 
-    if (/^\\i\[\d+\]\d*$/i.test(t)) return true;
+    if (/^[A-Z]{1,6}$/.test(t)) return true;
 
-    if (/^\\[A-Za-z]+\[.*?\]\d*$/i.test(t)) return true;
+    if (/^[a-z_]+\s*=\s*/i.test(t)) return true;
+    if (/^\w+\(.+\)$/i.test(t)) return true;
+    if (/^\{.*\}$/s.test(t)) return true;
+    if (/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\(/.test(t)) return true;
 
-    if (/^<.*?>$/i.test(t)) return true;
-    if (/^(<br\s*\/?>)+$/i.test(t)) return true;
-    if (/^<\/?center>$/i.test(t)) return true;
+    if (/greenworks/i.test(t)) return true;
+    if (/nw\.|process\.|window\.|game\./i.test(t)) return true;
 
-    if (!t.replace(/\s+/g, "")) return true;
+    if (/[A-Za-z\u00C0-\u1EF9]/.test(t)) return false;
 
-    if (!/[A-Za-z\u00C0-\u1EF9]/.test(t)) return true;
-
-    return false;
+    return true;
 }
 
 /* ======================================================
@@ -470,15 +477,21 @@ function extractKAGTextAndMapping(source) {
     const rgx = /"([^"]+)"|「([^」]+)」/g;
 
     for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (line.startsWith("@") || line.startsWith("*") || line.startsWith(";")) continue;
+        let line = lines[i].trim();
+ 
+        if (!line) continue;
+        if (line.startsWith("@")) continue;
+        if (line.startsWith("*")) continue;
+        if (line.startsWith(";")) continue;
+        if (/^\[.*?\]$/.test(line)) continue;   
+        if (/^\{.*\}$/.test(line)) continue;     
 
-        rgx.lastIndex = 0;
         let m, idx = 0;
+        rgx.lastIndex = 0;
 
         while ((m = rgx.exec(line)) !== null) {
             const text = m[1] || m[2];
-
+ 
             if (isGarbageText(text)) continue;
 
             out.push(text);
@@ -491,6 +504,7 @@ function extractKAGTextAndMapping(source) {
             idx++;
         }
     }
+
     return { lines: out, mapping };
 }
 
@@ -736,6 +750,7 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
 
