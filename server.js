@@ -53,37 +53,25 @@ function isGarbageText(str) {
     if (!str) return true;
 
     const t = str.trim();
-
-    if (!t || t.length < 1) return true;
-    if (/^[\W_]+$/.test(t)) return true;
-
+    if (!t) return true;
+ 
     if (/^\d+$/.test(t)) return true;
-
-    if (/^\\[a-z]+\[\d+\]$/i.test(t)) return true;      
-    if (/^\\[a-z]+$/i.test(t)) return true;     
-    if (/^<br\/?>$/i.test(t)) return true;
-    if (/^<center>$/i.test(t)) return true;
-
-    if (/^TILESET-/i.test(t)) return true;
-    if (/^POPTEXT-/i.test(t)) return true;
-    if (/^SWITCH-/i.test(t)) return true;
-    if (/^VARIABLE-/i.test(t)) return true;
-
+ 
     if (/^(retry|correct|start|skip|skipit|again|player|end|fail|flag|flag1|options|theend|greet)$/i.test(t)) return true;
+ 
+    if (/^(TILESET|POPTEXT)-/i.test(t)) return true;
+ 
+    if (/^[A-Za-z ]+<br>/i.test(t)) return true;
+ 
+    if (/^<\/?\w+>$/i.test(t)) return true;
+    if (/^(<br>)+$/i.test(t)) return true;
+ 
+    if (/^\\[a-z]+(\[.*?\])?/i.test(t)) return true;  
+    if (/^\\i\[\d+\]\d*/i.test(t)) return true;  
+ 
+    if (!/[A-Za-z0-9\u00C0-\u1EF9]/.test(t)) return true;
 
-    if (/^[A-Z]{1,6}$/.test(t)) return true;
-
-    if (/^[a-z_]+\s*=\s*/i.test(t)) return true;
-    if (/^\w+\(.+\)$/i.test(t)) return true;
-    if (/^\{.*\}$/s.test(t)) return true;
-    if (/^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\(/.test(t)) return true;
-
-    if (/greenworks/i.test(t)) return true;
-    if (/nw\.|process\.|window\.|game\./i.test(t)) return true;
-
-    if (/[A-Za-z\u00C0-\u1EF9]/.test(t)) return false;
-
-    return true;
+    return false;
 }
 
 /* ======================================================
@@ -754,3 +742,4 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
