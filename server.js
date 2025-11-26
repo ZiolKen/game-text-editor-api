@@ -54,22 +54,30 @@ function isGarbageText(str) {
 
     const t = str.trim();
     if (!t) return true;
- 
+  
     if (/^\d+$/.test(t)) return true;
+  
+    if (/^(retry|correct|start|skip|skipit|again|player|end|fail|flag|flag[0-9]|options|theend|greet|menu|title|continue|load|save|settings|config|credits|back|next|yes|no|ok|cancel|exit|quit|help)$/i.test(t)) return true;
+  
+    if (/^(TILESET|POPTEXT|SE|BGM|BGS|ME|ANIM|COMMON|VAR|SWITCH|ACTOR|CLASS|SKILL|ITEM|WEAPON|ARMOR|ENEMY|TROOP|STATE|EVENT|MAP|SYS)-/i.test(t)) return true;
+  
+    if (/^<\/?\w+(\s+[^>]*)?>\s*$/i.test(t)) return true;
+    if (/^(<br\s*\/?>)+$/i.test(t)) return true;
+    if (/^<[^>]+>$/i.test(t)) return true;
+  
+    if (/^\\[a-z]+(\[.*?\])?$/i.test(t)) return true;  
+    if (/^\\[ivcnpg]\[\d+\]$/i.test(t)) return true;
+    if (/^\\c\[\d+\].+\\c\[0\]$/i.test(t)) return true;  
+  
+    if (/^[\.…,!?;:\-_=+*#@$%^&()[\]{}|\/\\<>~`'"]+$/.test(t)) return true;
  
-    if (/^(retry|correct|start|skip|skipit|again|player|end|fail|flag|flag1|options|theend|greet)$/i.test(t)) return true;
+    if (/^(this\.|self\.|game_|$game|@|undefined|null|true|false|var |let |const )/.test(t)) return true;
+     
+    if (!/[A-Za-z0-9\u00C0-\u1EF9\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(t)) return true;
  
-    if (/^(TILESET|POPTEXT)-/i.test(t)) return true;
+    if (t.length <= 2 && !/^(ok|no|go|up|hi|me|we|he|it|is|am|an|at|be|by|do|if|in|of|on|or|so|to|us|oh|ah)$/i.test(t)) return true;
  
-    if (/^[A-Za-z ]+<br>/i.test(t)) return true;
- 
-    if (/^<\/?\w+>$/i.test(t)) return true;
-    if (/^(<br>)+$/i.test(t)) return true;
- 
-    if (/^\\[a-z]+(\[.*?\])?/i.test(t)) return true;  
-    if (/^\\i\[\d+\]\d*/i.test(t)) return true;  
- 
-    if (!/[A-Za-z0-9\u00C0-\u1EF9]/.test(t)) return true;
+    if (t.replace(/\s/g, '').length <= 1) return true;
 
     return false;
 }
@@ -88,14 +96,14 @@ function extractMVTextAndMapping(commonEvents) {
         ev.list.forEach((cmd, cmdIndex) => {
             const code = cmd.code;
             const params = cmd.parameters || [];
-
+ 
             if ((code === 401 || code === 405) && typeof params[0] === "string") {
                 if (!isGarbageText(params[0])) {
                     lines.push(params[0]);
                     mapping.push({ evIndex, cmdIndex, paramIndex: 0 });
                 }
             }
-
+ 
             else if (code === 102 && Array.isArray(params[0])) {
                 params[0].forEach((choice, ci) => {
                     if (typeof choice === "string" && !isGarbageText(choice)) {
@@ -107,7 +115,7 @@ function extractMVTextAndMapping(commonEvents) {
                     }
                 });
             }
-
+ 
             else if (code === 402 && typeof params[1] === "string") {
                 if (!isGarbageText(params[1])) {
                     lines.push(params[1]);
@@ -117,13 +125,71 @@ function extractMVTextAndMapping(commonEvents) {
                     });
                 }
             }
-
+ 
             else if ((code === 118 || code === 119) && typeof params[0] === "string") {
                 if (!isGarbageText(params[0])) {
                     lines.push(params[0]);
                     mapping.push({
                         evIndex, cmdIndex,
                         paramIndex: 0
+                    });
+                }
+            }
+ 
+            else if (code === 320 && typeof params[1] === "string") {
+                if (!isGarbageText(params[1])) {
+                    lines.push(params[1]);
+                    mapping.push({
+                        evIndex, cmdIndex,
+                        paramIndex: 1
+                    });
+                }
+            }
+ 
+            else if (code === 324 && typeof params[1] === "string") {
+                if (!isGarbageText(params[1])) {
+                    lines.push(params[1]);
+                    mapping.push({
+                        evIndex, cmdIndex,
+                        paramIndex: 1
+                    });
+                }
+            }
+ 
+            else if ((code === 355 || code === 655) && typeof params[0] === "string") {
+                const matches = params[0].match(/"([^"]+)"/g);
+                if (matches) {
+                    matches.forEach(match => {
+                        const text = match.slice(1, -1);
+                        if (!isGarbageText(text)) {
+                            lines.push(text);
+                            mapping.push({
+                                evIndex, cmdIndex,
+                                paramIndex: 0,
+                                type: "script",
+                                extractFull: params[0],
+                                originalText: text
+                            });
+                        }
+                    });
+                }
+            }
+ 
+            else if ((code === 356 || code === 656) && typeof params[0] === "string") {
+                const matches = params[0].match(/"([^"]+)"/g);
+                if (matches) {
+                    matches.forEach(match => {
+                        const text = match.slice(1, -1);
+                        if (!isGarbageText(text)) {
+                            lines.push(text);
+                            mapping.push({
+                                evIndex, cmdIndex,
+                                paramIndex: 0,
+                                type: "script",
+                                extractFull: params[0],
+                                originalText: text
+                            });
+                        }
                     });
                 }
             }
@@ -137,12 +203,23 @@ function insertMVTextBack(commonEvents, newLines, mapping) {
     mapping.forEach((m, i) => {
         const text = newLines[i];
         const ev = commonEvents[m.evIndex];
-        const cmd = ev.list[m.cmdIndex];
+        if (!ev) return;
 
-        if (Array.isArray(m.paramIndex))
-            cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
-        else
-            cmd.parameters[m.paramIndex] = text;
+        const cmd = ev.list[m.cmdIndex];
+        if (!cmd) return;
+ 
+        if (m.type === "script") {
+            cmd.parameters[m.paramIndex] = cmd.parameters[m.paramIndex].replace(
+                new RegExp('"' + m.originalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"'),
+                '"' + text + '"'
+            );
+        } 
+        else {
+            if (Array.isArray(m.paramIndex))
+                cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
+            else
+                cmd.parameters[m.paramIndex] = text;
+        }
     });
 
     return commonEvents;
@@ -166,30 +243,29 @@ function extractMapTextAndMapping(mapJson) {
             if (!page.list) return;
 
             page.list.forEach((cmd, cmdIndex) => {
-
                 const code = cmd.code;
                 const params = cmd.parameters || [];
-
+ 
                 if ((code === 401 || code === 405) && typeof params[0] === "string") {
                     if (!isGarbageText(params[0])) {
                         lines.push(params[0]);
                         mapping.push({ type:"event", eventId, pageIndex, cmdIndex, paramIndex:0 });
                     }
-                }
+                } 
                 else if (code === 102 && Array.isArray(params[0])) {
-                     params[0].forEach((choice, ci) => {
-                         if (typeof choice === "string" && !isGarbageText(choice)) {
-                             lines.push(choice);
-                             mapping.push({
-                                 type: "event",
-                                 eventId, pageIndex,
-                                 cmdIndex,
-                                 paramIndex:[0, ci]
-                             });
-                         }
-                     });
-                }
-                if (code === 402 && typeof params[1] === "string") {
+                    params[0].forEach((choice, ci) => {
+                        if (typeof choice === "string" && !isGarbageText(choice)) {
+                            lines.push(choice);
+                            mapping.push({
+                                type: "event",
+                                eventId, pageIndex,
+                                cmdIndex,
+                                paramIndex:[0, ci]
+                            });
+                        }
+                    });
+                } 
+                else if (code === 402 && typeof params[1] === "string") {
                     if (!isGarbageText(params[1])) {
                         lines.push(params[1]);
                         mapping.push({
@@ -198,25 +274,51 @@ function extractMapTextAndMapping(mapJson) {
                             cmdIndex, paramIndex:1
                         });
                     }
-                }
-                else if (code === 355 && typeof params[0] === "string") {
-                    const m = params[0].match(/"([^"]+)"/);
-                    if (m) {
-                        lines.push(m[1]);
-                        mapping.push({
-                            type: "script",
-                            eventId, pageIndex, cmdIndex,
-                            extractFull: params[0]
+                } 
+                else if ((code === 355 || code === 655) && typeof params[0] === "string") { 
+                    const matches = params[0].match(/"([^"]+)"/g);
+                    if (matches) {
+                        matches.forEach(match => {
+                            const text = match.slice(1, -1);  
+                            if (!isGarbageText(text)) {
+                                lines.push(text);
+                                mapping.push({
+                                    type: "script",
+                                    eventId, pageIndex, cmdIndex,
+                                    extractFull: params[0],
+                                    originalText: text
+                                });
+                            }
                         });
                     }
-                }
-                if ((code === 118 || code === 119) && typeof params[0] === "string") {
+                } 
+                else if ((code === 118 || code === 119) && typeof params[0] === "string") {
                     if (!isGarbageText(params[0])) {
                         lines.push(params[0]);
                         mapping.push({
                             type:"event",
                             eventId, pageIndex,
                             cmdIndex, paramIndex:0
+                        });
+                    }
+                } 
+                else if (code === 320 && typeof params[1] === "string") {
+                    if (!isGarbageText(params[1])) {
+                        lines.push(params[1]);
+                        mapping.push({
+                            type:"event",
+                            eventId, pageIndex,
+                            cmdIndex, paramIndex:1
+                        });
+                    }
+                } 
+                else if (code === 324 && typeof params[1] === "string") {
+                    if (!isGarbageText(params[1])) {
+                        lines.push(params[1]);
+                        mapping.push({
+                            type:"event",
+                            eventId, pageIndex,
+                            cmdIndex, paramIndex:1
                         });
                     }
                 }
@@ -245,8 +347,11 @@ function insertMapTextBack(mapJson, newLines, mapping) {
             else
                 cmd.parameters[m.paramIndex] = newText;
         }
-        else if (m.type === "script") {
-            cmd.parameters[0] = m.extractFull.replace(/"([^"]+)"/, `"${newText}"`);
+        else if (m.type === "script") { 
+            cmd.parameters[0] = cmd.parameters[0].replace(
+                new RegExp('"' + m.originalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"'),
+                '"' + newText + '"'
+            );
         }
     });
 
@@ -467,6 +572,7 @@ function extractKAGTextAndMapping(source) {
     const mapping = [];
 
     let inIscript = false;
+    let inMacro = false;
 
     const isGarbage = (txt) => {
         if (!txt) return true;
@@ -474,7 +580,7 @@ function extractKAGTextAndMapping(source) {
 
         return (
             t === "" ||
-            /^;+/.test(t) || 
+            /^;+/.test(t) ||
             /^\*.+/.test(t) ||
             /^\[.+\]$/.test(t) ||
             /^[@].+/.test(t) ||
@@ -482,67 +588,117 @@ function extractKAGTextAndMapping(source) {
             /^「§」$/.test(t) ||
             /^§$/.test(t) ||
             /^[\[\]{}()]+$/.test(t) ||
-            /^[=><+\-]+$/.test(t) ||
-            /^#/.test(t)
+            /^[=><+\-*\/]+$/.test(t) ||
+            /^#/.test(t) ||
+            /^[0-9]+$/.test(t) ||
+            /^(return|break|continue|if|else|while|for|function|var|const|let)$/i.test(t)
         );
     };
 
     for (let i = 0; i < lines.length; i++) {
         const raw = lines[i];
         const t = raw.trim();
-        let textValue = "";
  
         if (t.startsWith("[iscript]")) { inIscript = true; continue; }
         if (t.startsWith("[endscript]")) { inIscript = false; continue; }
         if (inIscript) continue;
  
+        if (t.startsWith("[macro")) { inMacro = true; continue; }
+        if (t.startsWith("[endmacro]")) { inMacro = false; continue; }
+        if (inMacro) continue;
+
         if (isGarbage(t)) continue;
+
+        let textValue = "";
+        let quoteType = '"';
+        let stringIndex = 0;
  
         const evalMatch = t.match(/@eval\s+exp=sf\.(?:name\d?|hnam\d?)="(.*?)"/);
         if (evalMatch) {
             textValue = evalMatch[1];
+            out.push(textValue);
+            mapping.push({
+                lineIndex: i,
+                original: raw,
+                quoteType: '"',
+                stringIndex: 0
+            });
+            continue;
         }
  
-        else {
-            const match = t.match(/text=(["'])(.*?)\1/);
-            if (match) {
-                textValue = match[2];
-            }
- 
-            else {
-                const quoteMatch = t.match(/「(.*?)」/);
-                if (quoteMatch) {
-                    textValue = quoteMatch[1];
-                }
- 
-                else if (/emb\s+exp="sf\.hnam/.test(t) || /。$/.test(t)) {
-                    textValue = raw.replace(/^;　?/, "");
-                }
- 
-                else if (/^\[cname\s+chara=.*?\]/.test(t)) {
-                    textValue = t
-                        .replace(/^\[cname\s+chara=.*?\]/, "")
-                        .replace(/\[np\]/gi, "")
-                        .trim();
-                }
- 
-                else { 
-                    if (/[A-Za-z0-9\u3000-\u9FFF]/.test(t)) { 
-                        if (!/^[\\\w\[\]<>\/=]+$/.test(t)) {
-                            textValue = raw;
-                        }
-                    }
-                }
-            }
+        const textAttrMatch = t.match(/text=(["'])(.*?)\1/);
+        if (textAttrMatch) {
+            textValue = textAttrMatch[2];
+            quoteType = textAttrMatch[1];
+            out.push(textValue);
+            mapping.push({
+                lineIndex: i,
+                original: raw,
+                quoteType: quoteType,
+                stringIndex: 0
+            });
+            continue;
         }
  
-        if (isGarbage(textValue)) continue;
-
-        out.push(textValue);
-        mapping.push({
-            lineIndex: i,
-            original: raw
-        });
+        const quoteJPMatch = t.match(/「(.*?)」/g);
+        if (quoteJPMatch) {
+            quoteJPMatch.forEach((match, idx) => {
+                const inner = match.slice(1, -1);
+                if (!isGarbage(inner)) {
+                    out.push(inner);
+                    mapping.push({
+                        lineIndex: i,
+                        original: raw,
+                        quoteType: '「',
+                        stringIndex: idx
+                    });
+                }
+            });
+            continue;
+        }
+ 
+        if (/emb\s+exp="sf\.hnam/.test(t) || /。$/.test(t)) {
+            textValue = raw.replace(/^;　?/, "").trim();
+            if (!isGarbage(textValue)) {
+                out.push(textValue);
+                mapping.push({
+                    lineIndex: i,
+                    original: raw,
+                    quoteType: '"',
+                    stringIndex: 0
+                });
+            }
+            continue;
+        }
+ 
+        if (/^\[cname\s+chara=.*?\]/.test(t)) {
+            textValue = t
+                .replace(/^\[cname\s+chara=.*?\]/, "")
+                .replace(/\[np\]/gi, "")
+                .trim();
+            if (!isGarbage(textValue)) {
+                out.push(textValue);
+                mapping.push({
+                    lineIndex: i,
+                    original: raw,
+                    quoteType: '"',
+                    stringIndex: 0
+                });
+            }
+            continue;
+        }
+ 
+        if (/[A-Za-z0-9\u3000-\u9FFF\u3040-\u309F\u30A0-\u30FF]/.test(t)) {
+            if (!/^[\\\w\[\]<>\/=]+$/.test(t) && !isGarbage(t)) {
+                out.push(raw.trim());
+                mapping.push({
+                    lineIndex: i,
+                    original: raw,
+                    quoteType: '"',
+                    stringIndex: 0
+                });
+            }
+        }
     }
 
     return { lines: out, mapping };
@@ -551,30 +707,35 @@ function extractKAGTextAndMapping(source) {
 function insertKAGTextBack(source, newLines, mapping) {
     const lines = source.split(/\r?\n/);
 
-    const rgx = /"([^"]+)"|「([^」]+)」/g;
-
-    function replaceNth(line, nth, newText, quoteType) {
-        let count = 0;
-
-        return line.replace(rgx, (match, g1, g2) => {
-            if (count === nth) {
-                const escaped = newText.replace(/"/g, '\\"');
-
-                if (quoteType === '"') return `"${escaped}"`;
-                return `「${escaped}」`;
-            }
-            count++;
-            return match;
-        });
-    }
-
     mapping.forEach((m, idx) => {
-        lines[m.lineIndex] = replaceNth(
-            lines[m.lineIndex],
-            m.stringIndex,
-            newLines[idx],
-            m.quoteType
-        );
+        const newText = newLines[idx];
+        const line = lines[m.lineIndex];
+        
+        if (m.quoteType === '「') { 
+            let count = 0;
+            lines[m.lineIndex] = line.replace(/「(.*?)」/g, (match) => {
+                if (count === m.stringIndex) {
+                    count++;
+                    return `「${newText}」`;
+                }
+                count++;
+                return match;
+            });
+        } else if (m.quoteType === '"' || m.quoteType === "'") { 
+            if (line.includes('text=')) {
+                lines[m.lineIndex] = line.replace(
+                    /text=(["'])(.*?)\1/,
+                    `text=${m.quoteType}${newText}${m.quoteType}`
+                );
+            } else if (line.includes('@eval')) {
+                lines[m.lineIndex] = line.replace(
+                    /@eval\s+exp=sf\.(?:name\d?|hnam\d?)="(.*?)"/,
+                    `@eval exp=sf.${line.match(/sf\.(name\d?|hnam\d?)/)[1]}="${newText}"`
+                );
+            } else { 
+                lines[m.lineIndex] = newText;
+            }
+        }
     });
 
     return lines.join("\n");
@@ -790,5 +951,6 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
