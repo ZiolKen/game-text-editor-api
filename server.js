@@ -12,8 +12,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(cors());
 app.use(express.json({ limit: "500mb" }));
-
-// In-memory store
+ 
 const store = new Map();
 
 /* ======================================================
@@ -30,13 +29,9 @@ function detectType(filename, buffer = "") {
         const text = buffer.toString();
 
         if (/@[a-zA-Z0-9_]+/.test(text)) return "kag-ks";
-
         if (/「[^」]+」/.test(text)) return "kag-ks";
-
         if (/\[[a-zA-Z0-9_]+[^\]]*\]/.test(text)) return "tyrano-ks";
-
         if (/\[iscript\]/i.test(text)) return "tyrano-ks";
-
         if (/\[(cm|eval|jump|tb_)/i.test(text)) return "tyrano-ks";
 
         return "tyrano-ks";
@@ -46,11 +41,7 @@ function detectType(filename, buffer = "") {
 }
 
 /* ======================================================
-   FILTER RPGM
-====================================================== */
-
-/* ======================================================
-   FILTER RPGM
+   FILTER RPGM  
 ====================================================== */
 
 function isGarbageText(str) {
@@ -86,28 +77,22 @@ function isGarbageText(str) {
     return false;
 }
 
-/* ==== RPGM helpers ==== */
- 
-const RGX_RPGM_SCRIPT_STRING =
-    /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'/g;
+const RGX_RPGM_ASSET = /\.(png|jpe?g|gif|bmp|webp|ogg|mp3|wav|m4a|mp4|webm|m4v)$/i;
 
-const RGX_RPGM_ASSET =
-    /\.(png|jpe?g|gif|bmp|webp|ogg|mp3|wav|m4a|mp4|webm|m4v)$/i;
- 
 function pushRpgmLine(lines, mapping, text, meta) {
     if (typeof text !== "string") return;
     if (isGarbageText(text)) return;
     lines.push(text);
     mapping.push(meta);
 }
- 
+
 function isRpgmMetaComment(str) {
     if (!str) return true;
     const t = str.trim();
     if (!t) return true;
- 
-    if (/^<[^>]+>$/.test(t)) return true; 
-    if (/^[A-Z0-9_]+$/.test(t)) return true; 
+
+    if (/^<[^>]+>$/.test(t)) return true;
+    if (/^[A-Z0-9_]+$/.test(t)) return true;
     if (/^[A-Za-z_][A-Za-z0-9_]*:?$/.test(t)) return true;
 
     return false;
@@ -116,24 +101,92 @@ function isRpgmMetaComment(str) {
 function extractRpgmScriptStrings(script, cb) {
     if (typeof script !== "string") return;
 
-    RGX_RPGM_SCRIPT_STRING.lastIndex = 0;
+    const processed = new Set();  
+ 
+    const templateRegex = /`([^`]*(?:\\.[^`]*)*)`/g;
     let m;
-    while ((m = RGX_RPGM_SCRIPT_STRING.exec(script)) !== null) {
-        const inner = (m[1] != null ? m[1] : m[2]) ?? "";
-        const value = inner;
+    while ((m = templateRegex.exec(script)) !== null) {
+        const value = m[1];
+        const key = `template:${value}`;
+        if (!processed.has(key) && !isGarbageText(value) && !RGX_RPGM_ASSET.test(value)) {
+            processed.add(key);
+            cb(value, m[1], "template");
+        }
+    }
+ 
+    const stringRegex = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'/g;
+    while ((m = stringRegex.exec(script)) !== null) {
+        const value = (m[1] != null ? m[1] : m[2]) ?? "";
         const trimmed = value.trim();
+        
         if (!trimmed) continue;
- 
         if (!/\s/.test(trimmed) && RGX_RPGM_ASSET.test(trimmed)) continue;
-
         if (isGarbageText(value)) continue;
+
+        const key = `string:${value}`;
+        if (!processed.has(key)) {
+            processed.add(key);
+            cb(value, value, "string");
+        }
+    }
  
-        cb(value, inner);
+    const pluginMatch = script.match(/^(\w+)\s+(.+)$/);
+    if (pluginMatch) {
+        const args = pluginMatch[2];
+         
+        try {
+            const jsonMatch = args.match(/\{[^}]+\}/);
+            if (jsonMatch) {
+                const obj = JSON.parse(jsonMatch[0]);
+                Object.entries(obj).forEach(([key, val]) => {
+                    if (typeof val === 'string' && !isGarbageText(val)) {
+                        const pkey = `plugin_json:${val}`;
+                        if (!processed.has(pkey)) {
+                            processed.add(pkey);
+                            cb(val, val, "plugin_json");
+                        }
+                    }
+                });
+            }
+        } catch {}
+ 
+        const kvRegex = /(\w+)\s*:\s*(["'])([^\2]*?)\2/g;
+        let kvm;
+        while ((kvm = kvRegex.exec(args)) !== null) {
+            const val = kvm[3];
+            if (!isGarbageText(val)) {
+                const kvkey = `plugin_kv:${val}`;
+                if (!processed.has(kvkey)) {
+                    processed.add(kvkey);
+                    cb(val, val, "plugin_kv");
+                }
+            }
+        }
+    }
+ 
+    const concatRegex = /(["'`])([^\1]*?)\1(\s*\+\s*(["'`])([^\4]*?)\4)+/g;
+    while ((m = concatRegex.exec(script)) !== null) {
+        const fullMatch = m[0];
+        const parts = fullMatch.match(/(["'`])([^\1]*?)\1/g);
+        if (parts && parts.length > 1) {
+            const combined = parts.map(p => {
+                const inner = p.slice(1, -1);
+                return inner.replace(/\\(.)/g, '$1');  
+            }).join('');
+            
+            if (!isGarbageText(combined)) {
+                const ckey = `concat:${combined}`;
+                if (!processed.has(ckey)) {
+                    processed.add(ckey);
+                    cb(combined, fullMatch, "concat");
+                }
+            }
+        }
     }
 }
 
 /* ======================================================
-   1) Extract MV CommonEvents.json
+   RPGM MV CommonEvents 
 ====================================================== */
 
 function extractMVTextAndMapping(commonEvents) {
@@ -152,66 +205,120 @@ function extractMVTextAndMapping(commonEvents) {
             if ((code === 401 || code === 405) && typeof params[0] === "string") {
                 pushRpgmLine(lines, mapping, params[0], {
                     ...base,
-                    paramIndex: 0
+                    paramIndex: 0,
+                    commandType: code === 401 ? 'show_text' : 'scrolling_text'
                 });
             }
  
-            else if (code === 102 && Array.isArray(params[0])) {
-                params[0].forEach((choice, ci) => {
-                    pushRpgmLine(lines, mapping, choice, {
-                        ...base,
-                        paramIndex: [0, ci]
+            else if (code === 102) {
+                if (Array.isArray(params[0])) {
+                    params[0].forEach((choice, ci) => {
+                        pushRpgmLine(lines, mapping, choice, {
+                            ...base,
+                            paramIndex: [0, ci],
+                            commandType: 'choice'
+                        });
                     });
-                });
+                }
+                if (typeof params[3] === 'string' && params[3]) {
+                    pushRpgmLine(lines, mapping, params[3], {
+                        ...base,
+                        paramIndex: 3,
+                        commandType: 'choice_cancel'
+                    });
+                }
             }
  
             else if (code === 402 && typeof params[1] === "string") {
-                pushRpgmLine(lines, mapping, params[1], {
+                if (params[1].trim() && !isGarbageText(params[1])) {
+                    pushRpgmLine(lines, mapping, params[1], {
+                        ...base,
+                        paramIndex: 1,
+                        commandType: 'when'
+                    });
+                }
+            }
+ 
+            else if (code === 122 && typeof params[4] === "string") {
+                if (!isGarbageText(params[4])) {
+                    pushRpgmLine(lines, mapping, params[4], {
+                        ...base,
+                        paramIndex: 4,
+                        commandType: 'variable_text'
+                    });
+                }
+            }
+ 
+            else if (code === 103 && typeof params[2] === "string") {
+                pushRpgmLine(lines, mapping, params[2], {
                     ...base,
-                    paramIndex: 1
+                    paramIndex: 2,
+                    commandType: 'input_number'
                 });
             }
  
             else if ((code === 118 || code === 119) && typeof params[0] === "string") {
                 pushRpgmLine(lines, mapping, params[0], {
                     ...base,
-                    paramIndex: 0
+                    paramIndex: 0,
+                    commandType: code === 118 ? 'label' : 'jump_label'
                 });
             }
  
             else if ((code === 320 || code === 324) && typeof params[1] === "string") {
                 pushRpgmLine(lines, mapping, params[1], {
                     ...base,
-                    paramIndex: 1
+                    paramIndex: 1,
+                    commandType: code === 320 ? 'actor_name' : 'nickname'
+                });
+            }
+ 
+            else if (code === 129 && typeof params[1] === "string") {
+                pushRpgmLine(lines, mapping, params[1], {
+                    ...base,
+                    paramIndex: 1,
+                    commandType: 'party_member'
                 });
             }
  
             else if ((code === 108 || code === 408) && typeof params[0] === "string") {
                 const comment = params[0];
-                if (!isRpgmMetaComment(comment) && !isGarbageText(comment)) {
+                if (isRpgmMetaComment(comment)) return;
+                if (/^(if|else|endif|loop|endloop|break|continue)\s/i.test(comment)) return;
+                
+                if (!isGarbageText(comment)) {
                     lines.push(comment);
                     mapping.push({
                         ...base,
                         paramIndex: 0,
-                        kind: "comment"
+                        commandType: 'comment'
                     });
                 }
             }
  
-            else if (
-                (code === 355 || code === 655 || code === 356 || code === 656) &&
-                typeof params[0] === "string"
-            ) {
-                extractRpgmScriptStrings(params[0], (text, originalText) => {
+            else if ((code === 355 || code === 655 || code === 356 || code === 656) && 
+                     typeof params[0] === "string") {
+                extractRpgmScriptStrings(params[0], (text, originalText, extractType) => {
                     lines.push(text);
                     mapping.push({
                         ...base,
                         paramIndex: 0,
-                        type: "script",
+                        commandType: (code === 356 || code === 656) ? 'plugin' : 'script',
+                        extractType,
                         extractFull: params[0],
                         originalText
                     });
                 });
+            }
+ 
+            else if (code === 132 && params[0] && typeof params[0].name === "string") {
+                if (!isGarbageText(params[0].name)) {
+                    pushRpgmLine(lines, mapping, params[0].name, {
+                        ...base,
+                        paramIndex: [0, 'name'],
+                        commandType: 'bgm_name'
+                    });
+                }
             }
         });
     });
@@ -223,23 +330,53 @@ function insertMVTextBack(commonEvents, newLines, mapping) {
     mapping.forEach((m, i) => {
         const text = newLines[i];
         if (typeof text !== "string") return;
+
         const ev = commonEvents[m.evIndex];
         if (!ev) return;
 
         const cmd = ev.list[m.cmdIndex];
         if (!cmd) return;
  
-        if (m.type === "script") {
-            cmd.parameters[m.paramIndex] = cmd.parameters[m.paramIndex].replace(
-                new RegExp('"' + m.originalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"'),
-                '"' + text + '"'
-            );
-        } 
-        else {
-            if (Array.isArray(m.paramIndex))
-                cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
-            else
+        if (m.extractType) {
+            const oldScript = cmd.parameters[0];
+            if (typeof oldScript !== "string") return;
+
+            let newScript = oldScript;
+
+            const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const escapeQuotes = (str) => str.replace(/"/g, '\\"').replace(/'/g, "\\'");
+
+            if (m.extractType === 'template') {
+                const escaped = escapeRegex(m.originalText);
+                newScript = newScript.replace(
+                    new RegExp('`' + escaped + '`', 'g'),
+                    '`' + text + '`'
+                );
+            } else if (m.extractType === 'concat') {
+                const escaped = escapeRegex(m.originalText);
+                newScript = newScript.replace(
+                    new RegExp(escaped, 'g'),
+                    '"' + escapeQuotes(text) + '"'
+                );
+            } else {
+                const escaped = escapeRegex(m.originalText);
+                newScript = newScript.replace(
+                    new RegExp('(["\'])' + escaped + '\\1', 'g'),
+                    (match, quote) => quote + escapeQuotes(text) + quote
+                );
+            }
+
+            cmd.parameters[0] = newScript;
+        } else { 
+            if (Array.isArray(m.paramIndex)) {
+                if (m.paramIndex.length === 2 && typeof m.paramIndex[1] === 'string') {
+                    cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
+                } else {
+                    cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
+                }
+            } else {
                 cmd.parameters[m.paramIndex] = text;
+            }
         }
     });
 
@@ -247,7 +384,7 @@ function insertMVTextBack(commonEvents, newLines, mapping) {
 }
 
 /* ======================================================
-   2) Extract MapXXX.json
+   RPGM Map  
 ====================================================== */
 
 function extractMapTextAndMapping(mapJson) {
@@ -267,70 +404,115 @@ function extractMapTextAndMapping(mapJson) {
                 if (!cmd) return;
                 const code = cmd.code;
                 const params = cmd.parameters || [];
-                const base = { type: "event", eventId, pageIndex, cmdIndex };
- 
+                const base = { eventId, pageIndex, cmdIndex };
+
                 if ((code === 401 || code === 405) && typeof params[0] === "string") {
                     pushRpgmLine(lines, mapping, params[0], {
                         ...base,
-                        paramIndex: 0
+                        paramIndex: 0,
+                        commandType: code === 401 ? 'show_text' : 'scrolling_text'
                     });
-                }
- 
-                else if (code === 102 && Array.isArray(params[0])) {
-                    params[0].forEach((choice, ci) => {
-                        pushRpgmLine(lines, mapping, choice, {
-                            ...base,
-                            paramIndex: [0, ci]
+                } 
+                else if (code === 102) {
+                    if (Array.isArray(params[0])) {
+                        params[0].forEach((choice, ci) => {
+                            pushRpgmLine(lines, mapping, choice, {
+                                ...base,
+                                paramIndex: [0, ci],
+                                commandType: 'choice'
+                            });
                         });
-                    });
-                }
- 
+                    }
+                    if (typeof params[3] === 'string' && params[3]) {
+                        pushRpgmLine(lines, mapping, params[3], {
+                            ...base,
+                            paramIndex: 3,
+                            commandType: 'choice_cancel'
+                        });
+                    }
+                } 
                 else if (code === 402 && typeof params[1] === "string") {
-                    pushRpgmLine(lines, mapping, params[1], {
+                    if (params[1].trim() && !isGarbageText(params[1])) {
+                        pushRpgmLine(lines, mapping, params[1], {
+                            ...base,
+                            paramIndex: 1,
+                            commandType: 'when'
+                        });
+                    }
+                } 
+                else if (code === 122 && typeof params[4] === "string") {
+                    if (!isGarbageText(params[4])) {
+                        pushRpgmLine(lines, mapping, params[4], {
+                            ...base,
+                            paramIndex: 4,
+                            commandType: 'variable_text'
+                        });
+                    }
+                }
+                else if (code === 103 && typeof params[2] === "string") {
+                    pushRpgmLine(lines, mapping, params[2], {
                         ...base,
-                        paramIndex: 1
+                        paramIndex: 2,
+                        commandType: 'input_number'
                     });
                 }
- 
                 else if ((code === 118 || code === 119) && typeof params[0] === "string") {
                     pushRpgmLine(lines, mapping, params[0], {
                         ...base,
-                        paramIndex: 0
+                        paramIndex: 0,
+                        commandType: code === 118 ? 'label' : 'jump_label'
                     });
-                }
- 
+                } 
                 else if ((code === 320 || code === 324) && typeof params[1] === "string") {
                     pushRpgmLine(lines, mapping, params[1], {
                         ...base,
-                        paramIndex: 1
+                        paramIndex: 1,
+                        commandType: code === 320 ? 'actor_name' : 'nickname'
+                    });
+                } 
+                else if (code === 129 && typeof params[1] === "string") {
+                    pushRpgmLine(lines, mapping, params[1], {
+                        ...base,
+                        paramIndex: 1,
+                        commandType: 'party_member'
                     });
                 }
- 
                 else if ((code === 108 || code === 408) && typeof params[0] === "string") {
                     const comment = params[0];
-                    if (!isRpgmMetaComment(comment) && !isGarbageText(comment)) {
+                    if (isRpgmMetaComment(comment)) return;
+                    if (/^(if|else|endif|loop|endloop|break|continue)\s/i.test(comment)) return;
+
+                    if (!isGarbageText(comment)) {
                         lines.push(comment);
                         mapping.push({
                             ...base,
                             paramIndex: 0,
-                            kind: "comment"
+                            commandType: 'comment'
                         });
                     }
                 }
- 
-                else if (
-                    (code === 355 || code === 655 || code === 356 || code === 656) &&
-                    typeof params[0] === "string"
-                ) {
-                    extractRpgmScriptStrings(params[0], (text, originalText) => {
+                else if ((code === 355 || code === 655 || code === 356 || code === 656) && 
+                         typeof params[0] === "string") {
+                    extractRpgmScriptStrings(params[0], (text, originalText, extractType) => {
                         lines.push(text);
                         mapping.push({
                             ...base,
-                            type: "script",
+                            paramIndex: 0,
+                            commandType: (code === 356 || code === 656) ? 'plugin' : 'script',
+                            extractType,
                             extractFull: params[0],
                             originalText
                         });
                     });
+                }
+                else if (code === 132 && params[0] && typeof params[0].name === "string") {
+                    if (!isGarbageText(params[0].name)) {
+                        pushRpgmLine(lines, mapping, params[0].name, {
+                            ...base,
+                            paramIndex: [0, 'name'],
+                            commandType: 'bgm_name'
+                        });
+                    }
                 }
             });
         });
@@ -341,8 +523,9 @@ function extractMapTextAndMapping(mapJson) {
 
 function insertMapTextBack(mapJson, newLines, mapping) {
     mapping.forEach((m, i) => {
-        const newText = newLines[i];
-        if (typeof newText !== "string") return;
+        const text = newLines[i];
+        if (typeof text !== "string") return;
+
         const ev = mapJson.events[m.eventId];
         if (!ev) return;
 
@@ -352,17 +535,47 @@ function insertMapTextBack(mapJson, newLines, mapping) {
         const cmd = page.list[m.cmdIndex];
         if (!cmd) return;
 
-        if (m.type === "event") {
-            if (Array.isArray(m.paramIndex))
-                cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = newText;
-            else
-                cmd.parameters[m.paramIndex] = newText;
-        }
-        else if (m.type === "script") { 
-            cmd.parameters[0] = cmd.parameters[0].replace(
-                new RegExp('"' + m.originalText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"'),
-                '"' + newText + '"'
-            );
+        if (m.extractType) {
+            const oldScript = cmd.parameters[0];
+            if (typeof oldScript !== "string") return;
+
+            let newScript = oldScript;
+            const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const escapeQuotes = (str) => str.replace(/"/g, '\\"').replace(/'/g, "\\'");
+
+            if (m.extractType === 'template') {
+                const escaped = escapeRegex(m.originalText);
+                newScript = newScript.replace(
+                    new RegExp('`' + escaped + '`', 'g'),
+                    '`' + text + '`'
+                );
+            } 
+            else if (m.extractType === 'concat') {
+                const escaped = escapeRegex(m.originalText);
+                newScript = newScript.replace(
+                    new RegExp(escaped, 'g'),
+                    '"' + escapeQuotes(text) + '"'
+                );
+            } 
+            else {
+                const escaped = escapeRegex(m.originalText);
+                newScript = newScript.replace(
+                    new RegExp('(["\'])' + escaped + '\\1', 'g'),
+                    (match, quote) => quote + escapeQuotes(text) + quote
+                );
+            }
+
+            cmd.parameters[0] = newScript;
+        } else {
+            if (Array.isArray(m.paramIndex)) {
+                if (m.paramIndex.length === 2 && typeof m.paramIndex[1] === 'string') {
+                    cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
+                } else {
+                    cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
+                }
+            } else {
+                cmd.parameters[m.paramIndex] = text;
+            }
         }
     });
 
@@ -370,7 +583,7 @@ function insertMapTextBack(mapJson, newLines, mapping) {
 }
 
 /* ======================================================
-   3) Ren'Py extract
+   Ren'Py extract
 ====================================================== */
 
 const RGX_ASSET_FILE = /\.(png|jpe?g|gif|webp|mp3|ogg|wav|mp4|webm|m4a|avi|mov|ttf|otf|pfb|pfm|ps|woff2?|eot|svg)["']?$/i;
@@ -393,8 +606,7 @@ function isDialogLine(line) {
     const raw = line;
     const trimmed = raw.trim();
     if (!trimmed) return false;
-
-    // remove comments respecting quotes
+ 
     let lineNoComment = "";
     let inS = false, inD = false;
     for (let i = 0; i < trimmed.length; i++) {
@@ -470,7 +682,7 @@ function extractRenpyTextAdvanced(source) {
         let m;
         while ((m = RGX_ANY_STRING.exec(line)) !== null) {
             const raw = m[0];
-            const quote = raw[0]; // " hoặc '
+            const quote = raw[0];  
             const inner = raw.slice(1, -1);
 
             allTexts.push(inner);
@@ -515,7 +727,7 @@ function insertRenpyTextBackAdvanced(source, newLines, mapping) {
 }
 
 /* ========================================================================
-   4) TyranoScript .ks — extract & reinsert dialog
+   TyranoScript .ks  
 ======================================================================== */
 
 function extractTyranoTextAndMapping(source) {
@@ -573,9 +785,9 @@ function insertTyranoTextBack(source, newLines, mapping) {
     return linesArr.join("\n");
 }
 
-/* ========================================================================
-   5) Kirikiri KAG .ks
-======================================================================== */
+/* ======================================================
+   KIRIKIRI KAG EXTRACTION  
+====================================================== */
 
 function extractKAGTextAndMapping(source) {
     const lines = source.split(/\r?\n/);
@@ -584,6 +796,7 @@ function extractKAGTextAndMapping(source) {
 
     let inIscript = false;
     let inMacro = false;
+    let macroDialogs = [];
 
     const isGarbage = (txt) => {
         if (!txt) return true;
@@ -592,125 +805,230 @@ function extractKAGTextAndMapping(source) {
         return (
             t === "" ||
             /^;+/.test(t) ||
-            /^\*.+/.test(t) ||
-            /^\[.+\]$/.test(t) ||
+            /^\*[a-zA-Z0-9_\|]+$/.test(t) ||
+            /^\[(?!.*text=)[a-zA-Z0-9_]+(\s+[^\]]*)?(\s*\/)?]$/.test(t) ||
             /^[@].+/.test(t) ||
             /^【.*?】$/.test(t) ||
             /^「§」$/.test(t) ||
             /^§$/.test(t) ||
             /^[\[\]{}()]+$/.test(t) ||
-            /^[=><+\-*\/]+$/.test(t) ||
-            /^#/.test(t) ||
+            /^[=><+\-*\/!]+$/.test(t) ||
+            /^#\d+$/.test(t) ||
             /^[0-9]+$/.test(t) ||
-            /^(return|break|continue|if|else|while|for|function|var|const|let)$/i.test(t)
+            /^(return|break|continue|if|else|elsif|while|for|function|var|const|let|true|false|null|undefined)$/i.test(t) ||
+            /^\s*(var|const|let|if|else|elsif|switch|case|default|for|while|do|function)\s/i.test(t)
         );
+    };
+
+    const extractFromTag = (tag, lineIdx, originalLine) => {
+        const textMatch = tag.match(/text=(["'])((?:(?!\1).)*)\1/);
+        if (textMatch) {
+            const text = textMatch[2];
+            if (!isGarbage(text)) {
+                out.push(text);
+                mapping.push({
+                    lineIndex: lineIdx,
+                    original: originalLine,
+                    extractType: 'tag_text',
+                    quoteType: textMatch[1],
+                    attributeName: 'text'
+                });
+                return true;
+            }
+        }
+
+        const nameMatch = tag.match(/name=(["'])((?:(?!\1).)*)\1/);
+        if (nameMatch) {
+            const text = nameMatch[2];
+            if (!isGarbage(text)) {
+                out.push(text);
+                mapping.push({
+                    lineIndex: lineIdx,
+                    original: originalLine,
+                    extractType: 'tag_name',
+                    quoteType: nameMatch[1],
+                    attributeName: 'name'
+                });
+                return true;
+            }
+        }
+
+        return false;
     };
 
     for (let i = 0; i < lines.length; i++) {
         const raw = lines[i];
         const t = raw.trim();
  
-        if (t.startsWith("[iscript]")) { inIscript = true; continue; }
-        if (t.startsWith("[endscript]")) { inIscript = false; continue; }
+        if (/^\[iscript\]/i.test(t)) { 
+            inIscript = true; 
+            continue; 
+        }
+        if (/^\[endscript\]/i.test(t)) { 
+            inIscript = false; 
+            continue; 
+        }
         if (inIscript) continue;
  
-        if (t.startsWith("[macro")) { inMacro = true; continue; }
-        if (t.startsWith("[endmacro]")) { inMacro = false; continue; }
-        if (inMacro) continue;
+        if (/^\[macro\s/i.test(t)) { 
+            inMacro = true; 
+            macroDialogs = [];
+            continue; 
+        }
+        if (/^\[endmacro\]/i.test(t)) { 
+            inMacro = false;
+            macroDialogs.forEach(item => {
+                out.push(item.text);
+                mapping.push(item.mapping);
+            });
+            macroDialogs = [];
+            continue; 
+        }
 
         if (isGarbage(t)) continue;
 
-        let textValue = "";
-        let quoteType = '"';
-        let stringIndex = 0;
+        let extracted = false;
  
-        const evalMatch = t.match(/@eval\s+exp=sf\.(?:name\d?|hnam\d?)="(.*?)"/);
+        const evalMatch = t.match(/@eval\s+exp=(sf|tf|f)\.(name\w*|hnam\w*)=(["'])((?:(?!\3).)*)\3/);
         if (evalMatch) {
-            textValue = evalMatch[1];
-            out.push(textValue);
-            mapping.push({
-                lineIndex: i,
-                original: raw,
-                quoteType: '"',
-                stringIndex: 0
-            });
-            continue;
+            const text = evalMatch[4];
+            if (!isGarbage(text)) {
+                const item = {
+                    lineIndex: i,
+                    original: raw,
+                    extractType: 'eval_name',
+                    quoteType: evalMatch[3],
+                    varPath: `${evalMatch[1]}.${evalMatch[2]}`
+                };
+                
+                if (inMacro) {
+                    macroDialogs.push({ text, mapping: item });
+                } else {
+                    out.push(text);
+                    mapping.push(item);
+                }
+                extracted = true;
+            }
         }
+
+        if (extracted) continue;
  
-        const textAttrMatch = t.match(/text=(["'])(.*?)\1/);
-        if (textAttrMatch) {
-            textValue = textAttrMatch[2];
-            quoteType = textAttrMatch[1];
-            out.push(textValue);
-            mapping.push({
-                lineIndex: i,
-                original: raw,
-                quoteType: quoteType,
-                stringIndex: 0
-            });
-            continue;
+        const embMatch = t.match(/\[emb\s+exp=(["'])(sf|tf|f)\.(name\w*|hnam\w*)\1\]/);
+        if (embMatch) {
+            const afterEmb = t.replace(/\[emb[^\]]*\]/g, '').trim();
+            if (!isGarbage(afterEmb)) {
+                const item = {
+                    lineIndex: i,
+                    original: raw,
+                    extractType: 'emb_with_text',
+                    quoteType: '"'
+                };
+                
+                if (inMacro) {
+                    macroDialogs.push({ text: afterEmb, mapping: item });
+                } else {
+                    out.push(afterEmb);
+                    mapping.push(item);
+                }
+                extracted = true;
+            }
         }
+
+        if (extracted) continue;
  
-        const quoteJPMatch = t.match(/「(.*?)」/g);
-        if (quoteJPMatch) {
-            quoteJPMatch.forEach((match, idx) => {
-                const inner = match.slice(1, -1);
-                if (!isGarbage(inner)) {
-                    out.push(inner);
-                    mapping.push({
+        const tagWithText = t.match(/^\[([a-zA-Z0-9_]+)(\s+[^\]]+)?\]/);
+        if (tagWithText) {
+            if (extractFromTag(t, i, raw)) {
+                extracted = true;
+            }
+        }
+
+        if (extracted) continue;
+ 
+        const jpQuotes = [...t.matchAll(/「([^」]+)」/g)];
+        if (jpQuotes.length > 0) {
+            jpQuotes.forEach((match, idx) => {
+                const text = match[1];
+                if (!isGarbage(text)) {
+                    const item = {
                         lineIndex: i,
                         original: raw,
+                        extractType: 'jp_quote',
                         quoteType: '「',
-                        stringIndex: idx
-                    });
+                        quoteIndex: idx
+                    };
+                    
+                    if (inMacro) {
+                        macroDialogs.push({ text, mapping: item });
+                    } else {
+                        out.push(text);
+                        mapping.push(item);
+                    }
                 }
             });
-            continue;
+            extracted = true;
         }
+
+        if (extracted) continue;
  
-        if (/emb\s+exp="sf\.hnam/.test(t) || /。$/.test(t)) {
-            textValue = raw.replace(/^;　?/, "").trim();
-            if (!isGarbage(textValue)) {
-                out.push(textValue);
-                mapping.push({
-                    lineIndex: i,
-                    original: raw,
-                    quoteType: '"',
-                    stringIndex: 0
-                });
-            }
-            continue;
-        }
- 
-        if (/^\[cname\s+chara=.*?\]/.test(t)) {
-            textValue = t
-                .replace(/^\[cname\s+chara=.*?\]/, "")
-                .replace(/\[np\]/gi, "")
+        if (/^\[cname\s/.test(t)) {
+            const afterCname = t
+                .replace(/^\[cname\s+[^\]]+\]/, '')
+                .replace(/\[np\]/gi, '')
+                .replace(/\[l\]/gi, '')
+                .replace(/\[r\]/gi, '')
                 .trim();
-            if (!isGarbage(textValue)) {
-                out.push(textValue);
-                mapping.push({
+            
+            if (!isGarbage(afterCname)) {
+                const item = {
                     lineIndex: i,
                     original: raw,
-                    quoteType: '"',
-                    stringIndex: 0
-                });
+                    extractType: 'cname_dialog',
+                    quoteType: '"'
+                };
+                
+                if (inMacro) {
+                    macroDialogs.push({ text: afterCname, mapping: item });
+                } else {
+                    out.push(afterCname);
+                    mapping.push(item);
+                }
+                extracted = true;
             }
-            continue;
         }
+
+        if (extracted) continue;
  
-        if (/[A-Za-z0-9\u3000-\u9FFF\u3040-\u309F\u30A0-\u30FF]/.test(t)) {
-            if (!/^[\\\w\[\]<>\/=]+$/.test(t) && !isGarbage(t)) {
-                out.push(raw.trim());
-                mapping.push({
+        const plainText = t
+            .replace(/\[l\]/gi, '')
+            .replace(/\[r\]/gi, '')
+            .replace(/\[np\]/gi, '')
+            .replace(/\[cm\]/gi, '')
+            .replace(/\[er\]/gi, '')
+            .trim();
+
+        if (plainText && 
+            !/^\[/.test(plainText) &&
+            !/^[@*;#]/.test(plainText) &&
+            /[\u3000-\u9FFF\u3040-\u309F\u30A0-\u30FF]|[A-Za-z]{3,}/.test(plainText)) {
+            
+            if (!isGarbage(plainText)) {
+                const item = {
                     lineIndex: i,
                     original: raw,
-                    quoteType: '"',
-                    stringIndex: 0
-                });
+                    extractType: 'plain_dialog',
+                    quoteType: '"'
+                };
+                
+                if (inMacro) {
+                    macroDialogs.push({ text: plainText, mapping: item });
+                } else {
+                    out.push(plainText);
+                    mapping.push(item);
+                }
             }
         }
-    }
+    });
 
     return { lines: out, mapping };
 }
@@ -720,40 +1038,65 @@ function insertKAGTextBack(source, newLines, mapping) {
 
     mapping.forEach((m, idx) => {
         const newText = newLines[idx];
+        if (typeof newText !== "string") return;
+
         const line = lines[m.lineIndex];
-        
-        if (m.quoteType === '「') { 
-            let count = 0;
-            lines[m.lineIndex] = line.replace(/「(.*?)」/g, (match) => {
-                if (count === m.stringIndex) {
-                    count++;
-                    return `「${newText}」`;
-                }
-                count++;
-                return match;
-            });
-        } else if (m.quoteType === '"' || m.quoteType === "'") { 
-            if (line.includes('text=')) {
+        if (line == null) return;
+
+        switch (m.extractType) {
+            case 'jp_quote': {
+                let jpCount = 0;
+                lines[m.lineIndex] = line.replace(/「([^」]+)」/g, (match) => {
+                    if (jpCount === m.quoteIndex) {
+                        jpCount++;
+                        return `「${newText}」`;
+                    }
+                    jpCount++;
+                    return match;
+                });
+                break;
+            }
+            case 'tag_text':
+            case 'tag_name': {
+                const attr = m.attributeName;
+                const quote = m.quoteType;
+                const attrRegex = new RegExp(`${attr}=${quote}[^${quote}]*${quote}`);
                 lines[m.lineIndex] = line.replace(
-                    /text=(["'])(.*?)\1/,
-                    `text=${m.quoteType}${newText}${m.quoteType}`
+                    attrRegex,
+                    `${attr}=${quote}${newText}${quote}`
                 );
-            } else if (line.includes('@eval')) {
+                break;
+            }
+            case 'eval_name': {
+                const varPath = m.varPath;
+                const evalQuote = m.quoteType;
+                const evalRegex = new RegExp(
+                    `@eval\\s+exp=${varPath.replace('.', '\\.')}=${evalQuote}[^${evalQuote}]*${evalQuote}`
+                );
                 lines[m.lineIndex] = line.replace(
-                    /@eval\s+exp=sf\.(?:name\d?|hnam\d?)="(.*?)"/,
-                    `@eval exp=sf.${line.match(/sf\.(name\d?|hnam\d?)/)[1]}="${newText}"`
+                    evalRegex,
+                    `@eval exp=${varPath}=${evalQuote}${newText}${evalQuote}`
                 );
-            } else { 
-                lines[m.lineIndex] = newText;
+                break;
+            }
+            case 'emb_with_text':
+            case 'cname_dialog':
+            case 'plain_dialog': {
+                const leadingTags = line.match(/^(\s*(?:\[[^\]]+\]\s*)*)/);
+                const prefix = leadingTags ? leadingTags[1] : '';
+                const trailingTags = line.match(/(\s*(?:\[[^\]]+\]\s*)*)$/);
+                const suffix = trailingTags ? trailingTags[1] : '';
+                lines[m.lineIndex] = prefix + newText + suffix;
+                break;
             }
         }
     });
 
-    return lines.join("\n");
+    return lines.join('\n');
 }
 
 /* ======================================================
-   UPLOAD — MAP + COMMON + RPY
+   UPLOAD — MAP + COMMON + RPY + TYRANO + KAG
 ====================================================== */
 
 app.post("/Upload", upload.array("files"), (req, res) => {
@@ -770,8 +1113,7 @@ app.post("/Upload", upload.array("files"), (req, res) => {
         if (type === "rpgmv-json") {
             try {
                 const obj = JSON.parse(buffer.toString("utf8"));
-
-                // CommonEvents.json → array
+ 
                 if (Array.isArray(obj)) {
                     const { lines, mapping } = extractMVTextAndMapping(obj);
                     store.set(id, {
@@ -782,8 +1124,7 @@ app.post("/Upload", upload.array("files"), (req, res) => {
                         lines
                     });
                     results.push({ id, type, name: originalname, lines });
-                }
-                // MapXXX.json → object
+                } 
                 else if (obj.events) {
                     const { lines, mapping } = extractMapTextAndMapping(obj);
                     store.set(id, {
@@ -962,8 +1303,3 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
-
-
-
-
-
