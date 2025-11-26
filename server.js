@@ -47,32 +47,29 @@ function detectType(filename, buffer = "") {
 
 function isGarbageText(str) {
     if (!str) return true;
+
     const t = str.trim();
 
     if (!t) return true;
 
-    // Only numbers → garbage
     if (/^\d+$/.test(t)) return true;
 
-    // System keywords
-    if (/^(player|end|retry|correct|start)$/i.test(t)) return true;
+    if (/^(player|end|retry|correct|start|skip|skipit|skipit|again)$/i.test(t)) return true;
 
-    // TILESET / POPTEXT
-    if (/^(TILESET|POPTEXT)-/i.test(t)) return true;
+    if (/^TILESET-.+/i.test(t)) return true;
 
-    // \i[12], \fs[xx], \c[xx], \ow[xx], \fb, \fn<Arial>
-    if (/^\\(i|fs|c|ow)\[\d+\]$/.test(t)) return true;
-    if (/^\\(fb|b|n|s|k)/.test(t)) return true;
-    if (/^\\fn<.*?>$/i.test(t)) return true;
+    if (/^POPTEXT-.+/i.test(t)) return true;
 
-    // Control codes
-    if (/^\\[A-Za-z]+/.test(t)) return true;
+    if (/^\\i\[\d+\]$/i.test(t)) return true;
 
-    // Only symbols
-    if (/^[^A-Za-z0-9\u00C0-\u1EF9]+$/.test(t)) return true;
+    if (/^\\[A-Za-z]+\[.*?\]$/i.test(t)) return true;
 
-    // Too short
-    if (t.length < 2) return true;
+    if (/^<.*?>$/i.test(t)) return true;
+    if (/^(<br>)+$/i.test(t)) return true;
+    if (/^<center>$/i.test(t)) return true;
+    if (/^<\/?center>$/i.test(t)) return true;
+
+    if (!/[A-Za-z\u00C0-\u1EF9]/.test(t)) return true;
 
     return false;
 }
@@ -738,6 +735,7 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
 
