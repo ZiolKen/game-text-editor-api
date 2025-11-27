@@ -149,9 +149,9 @@ function isRpgmMetaComment(str) {
 }
  
 function normalizeRpgmText(str) {
-    return str 
-        .replace(/\\[A-Za-z]+\[[^\]]*\]/g, "")
-        .replace(/\\[A-Za-z]+/g, "") 
+    return str
+        .replace(/\\[A-Za-z]+\[[^\]]*\]/g, "")   
+        .replace(/\\[A-Za-z]+/g, "")        
         .replace(/<br\s*\/?>/gi, " ")
         .replace(/<\/?\w+(\s+[^>]*)?>/g, " ")
         .replace(/\s+/g, " ")
@@ -161,10 +161,10 @@ function normalizeRpgmText(str) {
 function isDialogueText(str) {
     if (!str) return false;
 
-    const { text: body, skip } = stripSpeakerPrefix(str);
-    if (skip) return false;
+    const pre = stripSpeakerPrefix(str);
+    if (pre.skip) return false;
 
-    let t = body.trim();
+    let t = pre.text.trim();
     if (!t) return false;
 
     if (isGarbageText(t)) return false;
@@ -174,12 +174,12 @@ function isDialogueText(str) {
  
     t = t.replace(/^["“”]+/, "").replace(/["“”]+$/, "").trim();
     if (!t) return false;
- 
+
     if (isGarbageText(t)) return false;
 
     const lower = t.toLowerCase();
  
-    if (/^(none|picture|pictures|bg|bg-|keyhint|oldmap\d*|prayer|chest|offering)$/i.test(t)) {
+    if (/^(none|picture|pictures|bg|keyhint|oldmap\d*|prayer|chest|offering)$/i.test(t)) {
         return false;
     }
  
@@ -188,7 +188,15 @@ function isDialogueText(str) {
         return false;
     }
  
-    if (!/[A-Za-z\u00C0-\u1EF9]/.test(t)) return false;
+    if (
+        !/\b(i|me|my|mine|we|us|our|you|your|yours|he|she|they|him|her|them)\b/i.test(t) &&
+        /\b(key|plant|potion|artifact|statue|ladder|book|camera|rope|boots?|shovel|talisman|medallion|mask|bullet|gunpowder|essence|page|doll|coin|flower|algae|bikini|whip|powder|liquid|device|oil|container|nuts?)\b/i.test(t) &&
+        /\b(can be|used to|used for|used in crafting|that can)\b/i.test(t)
+    ) {
+        return false;
+    }
+ 
+    if (!/\s/.test(t) && /^[A-Za-z0-9_]+$/.test(t)) return false;
  
     if (/^(i|i'm|i’ve|i'd|i’ll|we|we're|we’ve|we’ll|you|you’re|you'll|he|she|they|it|oh|ah|well|hey|hmm|ugh)\b/i.test(t)) {
         return true;
@@ -202,9 +210,30 @@ function isDialogueText(str) {
  
     if (/[.!?]\s+[A-Z]/.test(t)) return true;
  
-    if (t.length >= 25 && t.split(/\s+/).length >= 3) return true;
+    if (t.length >= 16 && t.split(/\s+/).length >= 3) return true;
 
     return false;
+}
+ 
+function isChoiceText(str) {
+    if (!str) return false;
+    let t = str.trim();
+    if (!t) return false;
+
+    t = normalizeRpgmText(t);
+    if (!t) return false;
+ 
+    if (/^(none|picture|pictures)$/i.test(t)) return false;
+    if (/^(bg|bg-)/i.test(t)) return false;
+ 
+    if (!/\s/.test(t) && /^[A-Za-z0-9_\-]+$/.test(t) &&
+        !/^(yes|no|ok)$/i.test(t)) {
+        return false;
+    }
+ 
+    if (/^(cancel|back)$/i.test(t)) return false;
+ 
+    return true;
 }
 
 /* ======================================================
@@ -299,7 +328,7 @@ function extractRpgmScriptStrings(script, cb) {
 }
 
 /* ======================================================
-   RPGM Universal
+   RPGM JSON Universal
 ====================================================== */
 
 function extractMVTextAndMapping(commonEvents) {
@@ -330,7 +359,7 @@ function extractMVTextAndMapping(commonEvents) {
             if (code === 102 && Array.isArray(params[0])) {
                 params[0].forEach((choice, ci) => {
                     if (typeof choice !== "string") return;
-                    if (!isDialogueText(choice)) return;
+                    if (!isChoiceText(choice)) return;
 
                     pushRpgmLine(
                         lines,
@@ -406,7 +435,7 @@ function insertMVTextBack(commonEvents, newLines, mapping) {
 }
 
 /* ======================================================
-   RPGM MapXXX
+   RPGM MapXXX JSON
 ====================================================== */
 
 function extractMapTextAndMapping(mapJson) {
@@ -427,7 +456,7 @@ function extractMapTextAndMapping(mapJson) {
                 const code = cmd.code;
                 const params = cmd.parameters || [];
                 const base = { eventId, pageIndex, cmdIndex };
- 
+
                 if ((code === 401 || code === 405) && typeof params[0] === "string") {
                     if (isDialogueText(params[0])) {
                         pushRpgmLine(
@@ -439,11 +468,11 @@ function extractMapTextAndMapping(mapJson) {
                         );
                     }
                 }
- 
+
                 if (code === 102 && Array.isArray(params[0])) {
                     params[0].forEach((choice, ci) => {
                         if (typeof choice !== "string") return;
-                        if (!isDialogueText(choice)) return;
+                        if (!isChoiceText(choice)) return;
 
                         pushRpgmLine(
                             lines,
@@ -524,7 +553,7 @@ function insertMapTextBack(mapJson, newLines, mapping) {
 }
 
 /* ======================================================
-   Ren'Py extract
+   Ren'Py RPY Universal
 ====================================================== */
 
 const RGX_ASSET_FILE = /\.(png|jpe?g|gif|webp|mp3|ogg|wav|mp4|webm|m4a|avi|mov|ttf|otf|pfb|pfm|ps|woff2?|eot|svg)["']?$/i;
@@ -668,7 +697,7 @@ function insertRenpyTextBackAdvanced(source, newLines, mapping) {
 }
 
 /* ========================================================================
-   TyranoScript .ks  
+   Tyranobuild KS Universal 
 ======================================================================== */
 
 function extractTyranoTextAndMapping(source) {
@@ -727,7 +756,7 @@ function insertTyranoTextBack(source, newLines, mapping) {
 }
 
 /* ======================================================
-   KIRIKIRI KAG EXTRACTION  
+   Kirikiri-KAG KS Universal
 ====================================================== */
 
 function extractKAGTextAndMapping(source) {
@@ -1244,6 +1273,7 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
 
