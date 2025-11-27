@@ -8,12 +8,28 @@ const cors = require("cors");
 const { v4: uuidv4 } = require("uuid");
 
 const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 10 * 1024 * 1024,
+        files: 500
+    }
+});
 
 app.use(cors());
-app.use(express.json({ limit: "500mb" }));
+app.use(express.json({ limit: "250mb" }));
  
 const store = new Map();
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000; 
+
+function saveItemWithTTL(id, data) {
+    store.set(id, data);
+
+    setTimeout(() => {
+        store.delete(id);
+    }, ONE_DAY_MS);
+}
 
 /* ======================================================
    Detect file type
@@ -1086,7 +1102,7 @@ app.post("/Upload", upload.array("files"), (req, res) => {
  
                 if (Array.isArray(obj)) {
                     const { lines, mapping } = extractMVTextAndMapping(obj);
-                    store.set(id, {
+                    saveItemWithTTL(id, {
                         type,
                         name: originalname,
                         mvRaw: obj,
@@ -1122,7 +1138,7 @@ app.post("/Upload", upload.array("files"), (req, res) => {
             const src = buffer.toString("utf8");
             const { lines, mapping } = extractRenpyTextAdvanced(src);
 
-            store.set(id, {
+            saveItemWithTTL(id, {
                 type,
                 name: originalname,
                 renpySource: src,
@@ -1139,7 +1155,7 @@ app.post("/Upload", upload.array("files"), (req, res) => {
             const src = buffer.toString("utf8");
             const { lines, mapping } = extractTyranoTextAndMapping(src);
       
-            store.set(id, {
+            saveItemWithTTL(id, {
                 type,
                 name: originalname,
                 tyranoSource: src,
@@ -1156,7 +1172,7 @@ app.post("/Upload", upload.array("files"), (req, res) => {
             const src = buffer.toString("utf8");
             const { lines, mapping } = extractKAGTextAndMapping(src);
 
-            store.set(id, {
+            saveItemWithTTL(id, {
                 type,
                 name: originalname,
                 kagSource: src,
@@ -1169,7 +1185,7 @@ app.post("/Upload", upload.array("files"), (req, res) => {
         }
 
         // Unsupported
-        store.set(id, { type, name: originalname, rawBuffer: buffer });
+        saveItemWithTTL(id, { type, name: originalname, rawBuffer: buffer });
         results.push({
             id, type, name: originalname,
             message: "This file type is not supported yet."
@@ -1273,6 +1289,7 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
 
