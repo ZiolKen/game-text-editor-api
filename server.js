@@ -78,13 +78,53 @@ function isGarbageText(str) {
     return false;
 }
 
+function stripSpeakerPrefix(text) {
+    if (typeof text !== "string") {
+        return { text, prefix: null, skip: false };
+    }
+
+    const trimmed = text.replace(/^\s+/, ""); 
+    const m = trimmed.match(/^([A-Za-z]{2,8}|NPC|Npc|npc)\.(.*)$/);
+    if (!m) {
+        return { text, prefix: null, skip: false };
+    }
+
+    const prefix = m[1] + ".";
+    let body = m[2].replace(/^\s+/, "");
+ 
+    if (!body) {
+        return { text, prefix, skip: true };
+    }
+ 
+    if (/^\/[A-Za-z0-9_]+$/.test(body)) {
+        return { text, prefix, skip: true };
+    }
+
+    return { text: body, prefix, skip: false };
+}
+
 const RGX_RPGM_ASSET = /\.(png|jpe?g|gif|bmp|webp|ogg|mp3|wav|m4a|mp4|webm|m4v)$/i;
 
-function pushRpgmLine(lines, mapping, text, meta) {
+function pushRpgmLine(lines, mapping, text, meta, opts = {}) {
     if (typeof text !== "string") return;
-    if (isGarbageText(text)) return;
-    lines.push(text);
-    mapping.push(meta);
+
+    let value = text;
+    let speakerPrefix = null;
+
+    if (opts.stripSpeakerPrefix) {
+        const res = stripSpeakerPrefix(text);
+        if (res.skip) return; 
+        value = res.text;
+        speakerPrefix = res.prefix;  
+    }
+
+    if (isGarbageText(value)) return;
+
+    lines.push(value);
+    mapping.push({
+        ...meta,
+        speakerPrefix,  
+    });
 }
 
 function isRpgmMetaComment(str) {
@@ -208,7 +248,7 @@ function extractMVTextAndMapping(commonEvents) {
                     ...base,
                     paramIndex: 0,
                     commandType: code === 401 ? 'show_text' : 'scrolling_text'
-                });
+                }, { stripSpeakerPrefix: true });
             }
  
             else if (code === 102) {
@@ -218,7 +258,7 @@ function extractMVTextAndMapping(commonEvents) {
                             ...base,
                             paramIndex: [0, ci],
                             commandType: 'choice'
-                        });
+                        }, { stripSpeakerPrefix: true });
                     });
                 }
                 if (typeof params[3] === 'string' && params[3]) {
@@ -226,17 +266,18 @@ function extractMVTextAndMapping(commonEvents) {
                         ...base,
                         paramIndex: 3,
                         commandType: 'choice_cancel'
-                    });
+                    }, { stripSpeakerPrefix: true });
                 }
             }
  
             else if (code === 402 && typeof params[1] === "string") {
-                if (params[1].trim() && !isGarbageText(params[1])) {
+                const s = params[1].trim();
+                if (s && !isGarbageText(s)) {
                     pushRpgmLine(lines, mapping, params[1], {
                         ...base,
                         paramIndex: 1,
                         commandType: 'when'
-                    });
+                    }, { stripSpeakerPrefix: true });
                 }
             }
  
@@ -369,12 +410,21 @@ function insertMVTextBack(commonEvents, newLines, mapping) {
 
             cmd.parameters[0] = newScript;
         } else { 
-            if (Array.isArray(m.paramIndex)) {
-                cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
-            } else {
-                cmd.parameters[m.paramIndex] = text;
-            }
-        }
+              let finalText = text;
+              if (m.speakerPrefix) {
+                  finalText = m.speakerPrefix + finalText;
+              }
+      
+              if (Array.isArray(m.paramIndex)) {
+                  if (m.paramIndex.length === 2 && typeof m.paramIndex[1] === 'string') {
+                      cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = finalText;
+                  } else {
+                      cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = finalText;
+                  }
+              } else {
+                  cmd.parameters[m.paramIndex] = finalText;
+              }
+          }
     });
 
     return commonEvents;
@@ -408,8 +458,8 @@ function extractMapTextAndMapping(mapJson) {
                         ...base,
                         paramIndex: 0,
                         commandType: code === 401 ? 'show_text' : 'scrolling_text'
-                    });
-                } 
+                    }, { stripSpeakerPrefix: true });
+                }
                 else if (code === 102) {
                     if (Array.isArray(params[0])) {
                         params[0].forEach((choice, ci) => {
@@ -417,7 +467,7 @@ function extractMapTextAndMapping(mapJson) {
                                 ...base,
                                 paramIndex: [0, ci],
                                 commandType: 'choice'
-                            });
+                            }, { stripSpeakerPrefix: true });
                         });
                     }
                     if (typeof params[3] === 'string' && params[3]) {
@@ -425,18 +475,19 @@ function extractMapTextAndMapping(mapJson) {
                             ...base,
                             paramIndex: 3,
                             commandType: 'choice_cancel'
-                        });
+                        }, { stripSpeakerPrefix: true });
                     }
-                } 
-                else if (code === 402 && typeof params[1] === "string") {
-                    if (params[1].trim() && !isGarbageText(params[1])) {
-                        pushRpgmLine(lines, mapping, params[1], {
-                            ...base,
-                            paramIndex: 1,
-                            commandType: 'when'
-                        });
-                    }
-                } 
+                }
+                  else if (code === 402 && typeof params[1] === "string") {
+                      const s = params[1].trim();
+                      if (s && !isGarbageText(s)) {
+                          pushRpgmLine(lines, mapping, params[1], {
+                              ...base,
+                              paramIndex: 1,
+                              commandType: 'when'
+                          }, { stripSpeakerPrefix: true });
+                      }
+                  }
                 else if (code === 122 && typeof params[4] === "string") {
                     if (!isGarbageText(params[4])) {
                         pushRpgmLine(lines, mapping, params[4], {
@@ -564,12 +615,21 @@ function insertMapTextBack(mapJson, newLines, mapping) {
 
             cmd.parameters[0] = newScript;
         } else {
-            if (Array.isArray(m.paramIndex)) {
-                cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
-            } else {
-                cmd.parameters[m.paramIndex] = text;
-            }
-        }
+              let finalText = text;
+              if (m.speakerPrefix) {
+                  finalText = m.speakerPrefix + finalText;
+              }
+      
+              if (Array.isArray(m.paramIndex)) {
+                  if (m.paramIndex.length === 2 && typeof m.paramIndex[1] === 'string') {
+                      cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = finalText;
+                  } else {
+                      cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = finalText;
+                  }
+              } else {
+                  cmd.parameters[m.paramIndex] = finalText;
+              }
+          }
     });
 
     return mapJson;
@@ -1296,5 +1356,6 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
 
