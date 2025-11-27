@@ -44,30 +44,31 @@ function detectType(filename, buffer = "") {
    FILTER RPGM  
 ====================================================== */
 
+
 function isGarbageText(str) {
     if (!str) return true;
 
     const t = str.trim();
     if (!t) return true;
-  
+ 
     if (/^\d+$/.test(t)) return true;
-  
+ 
     if (/^(retry|correct|start|skip|skipit|again|player|end|fail|flag|flag[0-9]|options|theend|greet|menu|title|continue|load|save|settings|config|credits|back|next|yes|no|ok|cancel|exit|quit|help)$/i.test(t)) return true;
-  
+ 
     if (/^(TILESET|POPTEXT|SE|BGM|BGS|ME|ANIM|COMMON|VAR|SWITCH|ACTOR|CLASS|SKILL|ITEM|WEAPON|ARMOR|ENEMY|TROOP|STATE|EVENT|MAP|SYS)-/i.test(t)) return true;
-  
+ 
     if (/^<\/?\w+(\s+[^>]*)?>\s*$/i.test(t)) return true;
     if (/^(<br\s*\/?>)+$/i.test(t)) return true;
     if (/^<[^>]+>$/i.test(t)) return true;
-  
+ 
     if (/^\\[a-z]+(\[.*?\])?$/i.test(t)) return true;  
     if (/^\\[ivcnpg]\[\d+\]$/i.test(t)) return true;
     if (/^\\c\[\d+\].+\\c\[0\]$/i.test(t)) return true;  
-  
+ 
     if (/^[\.…,!?;:\-_=+*#@$%^&()[\]{}|\/\\<>~`'"]+$/.test(t)) return true;
  
     if (/^(this\.|self\.|game_|$game|@|undefined|null|true|false|var |let |const )/.test(t)) return true;
-     
+ 
     if (!/[A-Za-z0-9\u00C0-\u1EF9\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(t)) return true;
  
     if (t.length <= 2 && !/^(ok|no|go|up|hi|me|we|he|it|is|am|an|at|be|by|do|if|in|of|on|or|so|to|us|oh|ah)$/i.test(t)) return true;
@@ -90,7 +91,7 @@ function isRpgmMetaComment(str) {
     if (!str) return true;
     const t = str.trim();
     if (!t) return true;
-
+ 
     if (/^<[^>]+>$/.test(t)) return true;
     if (/^[A-Z0-9_]+$/.test(t)) return true;
     if (/^[A-Za-z_][A-Za-z0-9_]*:?$/.test(t)) return true;
@@ -101,7 +102,7 @@ function isRpgmMetaComment(str) {
 function extractRpgmScriptStrings(script, cb) {
     if (typeof script !== "string") return;
 
-    const processed = new Set();  
+    const processed = new Set();
  
     const templateRegex = /`([^`]*(?:\\.[^`]*)*)`/g;
     let m;
@@ -171,7 +172,7 @@ function extractRpgmScriptStrings(script, cb) {
         if (parts && parts.length > 1) {
             const combined = parts.map(p => {
                 const inner = p.slice(1, -1);
-                return inner.replace(/\\(.)/g, '$1');  
+                return inner.replace(/\\(.)/g, '$1');
             }).join('');
             
             if (!isGarbageText(combined)) {
@@ -369,11 +370,7 @@ function insertMVTextBack(commonEvents, newLines, mapping) {
             cmd.parameters[0] = newScript;
         } else { 
             if (Array.isArray(m.paramIndex)) {
-                if (m.paramIndex.length === 2 && typeof m.paramIndex[1] === 'string') {
-                    cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
-                } else {
-                    cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
-                }
+                cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
             } else {
                 cmd.parameters[m.paramIndex] = text;
             }
@@ -568,11 +565,7 @@ function insertMapTextBack(mapJson, newLines, mapping) {
             cmd.parameters[0] = newScript;
         } else {
             if (Array.isArray(m.paramIndex)) {
-                if (m.paramIndex.length === 2 && typeof m.paramIndex[1] === 'string') {
-                    cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
-                } else {
-                    cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
-                }
+                cmd.parameters[m.paramIndex[0]][m.paramIndex[1]] = text;
             } else {
                 cmd.parameters[m.paramIndex] = text;
             }
@@ -1303,4 +1296,5 @@ app.get("/", (req, res) => res.send("Backend is running."));
 
 const port = process.env.PORT || 10000;
 app.listen(port, () => console.log("Server running on", port));
+
 
